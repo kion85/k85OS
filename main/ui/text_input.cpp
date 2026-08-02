@@ -10,6 +10,7 @@
 
 #include <cstring>
 #include <cstdio>
+#include <cctype>
 #include "esp_timer.h"
 
 static int64_t k85_ti_ticks_ms() { return esp_timer_get_time() / 1000; }
@@ -21,8 +22,8 @@ static const char *KB_ROW3_EN[] = {"Z","X","C","V","B","N","M","-","_","."};
 static const char *KB_ROW1_RU[] = {"Й","Ц","У","К","Е","Н","Г","Ш","Щ","З","Х","Ъ"};
 static const char *KB_ROW2_RU[] = {"Ф","Ы","В","А","П","Р","О","Л","Д","Ж","Э"};
 static const char *KB_ROW3_RU[] = {"Я","Ч","С","М","И","Т","Ь","Б","Ю","Ё","."};
-static const char *KB_ROW4_EN[] = {"SPACE","DEL","EXIT","OK","RU"};
-static const char *KB_ROW4_RU[] = {"SPACE","DEL","EXIT","OK","EN"};
+static const char *KB_ROW4_EN[] = {"SPACE","DEL","EXIT","OK","RU","CAPS"};
+static const char *KB_ROW4_RU[] = {"SPACE","DEL","EXIT","OK","EN","CAPS"};
 
 struct KbLayout {
     const char *const *rows[5];
@@ -31,11 +32,11 @@ struct KbLayout {
 
 static KbLayout kb_layout_en() {
     return { { KB_ROW0, KB_ROW1_EN, KB_ROW2_EN, KB_ROW3_EN, KB_ROW4_EN },
-             { 10, 10, 9, 10, 5 } };
+             { 10, 10, 9, 10, 6 } };
 }
 static KbLayout kb_layout_ru() {
     return { { KB_ROW0, KB_ROW1_RU, KB_ROW2_RU, KB_ROW3_RU, KB_ROW4_RU },
-             { 10, 12, 11, 11, 5 } };
+             { 10, 12, 11, 11, 6 } };
 }
 
 bool k85_text_input(const char *prompt, const char *initial, char *out, size_t out_size) {
@@ -47,6 +48,7 @@ bool k85_text_input(const char *prompt, const char *initial, char *out, size_t o
     int a_count = 0, b_count = 0;
     const int double_ms = 350;
     bool is_ru = false;
+    bool is_caps = false;
 
     int W = M5.Display.width();
     int H = M5.Display.height();
@@ -62,7 +64,7 @@ bool k85_text_input(const char *prompt, const char *initial, char *out, size_t o
         M5.Display.setTextSize(1);
         M5.Display.setTextColor(accent, bg);
         M5.Display.setCursor(4, 2);
-        M5.Display.printf("%s [%s]", prompt, is_ru ? "RU" : "EN");
+        M5.Display.printf("%s [%s/%s]", prompt, is_ru ? "RU" : "EN", is_caps ? "CAPS" : "low");
 
         M5.Display.setTextSize(2);
         M5.Display.setTextColor(fg, bg);
@@ -110,25 +112,8 @@ bool k85_text_input(const char *prompt, const char *initial, char *out, size_t o
         if (k85_btn_a_pressed()) {
             k85_wake_screen();
             if ((now - last_a) < double_ms && a_count == 1) {
-                const char *key = kb.rows[st_row][st_col];
-                if (!strcmp(key, "SPACE")) {
-                    size_t l = strlen(text);
-                    if (l + 1 < sizeof(text)) { text[l] = ' '; text[l + 1] = 0; }
-                } else if (!strcmp(key, "DEL")) {
-                    size_t l = strlen(text);
-                    if (l > 0) text[l - 1] = 0;
-                } else if (!strcmp(key, "EXIT")) {
-                    return false;
-                } else if (!strcmp(key, "OK")) {
-                    snprintf(out, out_size, "%s", text);
-                    return true;
-                } else if (!strcmp(key, "EN") || !strcmp(key, "RU")) {
-                    is_ru = !strcmp(key, "RU");
-                    st_row = 0; st_col = 0;
-                } else {
-                    size_t l = strlen(text);
-                    if (l + 1 < sizeof(text)) { text[l] = key[0]; text[l + 1] = 0; }
-                }
+                st_row = (st_row + 1) % 5;
+                if (st_col > kb.counts[st_row] - 1) st_col = kb.counts[st_row] - 1;
                 a_count = 0;
             } else {
                 st_col = (st_col + 1) % kb.counts[st_row];
@@ -139,15 +124,31 @@ bool k85_text_input(const char *prompt, const char *initial, char *out, size_t o
         }
         if (k85_btn_b_pressed()) {
             k85_wake_screen();
-            if ((now - last_b) < double_ms && b_count == 1) {
+            const char *key = kb.rows[st_row][st_col];
+            if (!strcmp(key, "SPACE")) {
+                size_t l = strlen(text);
+                if (l + 1 < sizeof(text)) { text[l] = ' '; text[l + 1] = 0; }
+            } else if (!strcmp(key, "DEL")) {
+                size_t l = strlen(text);
+                if (l > 0) text[l - 1] = 0;
+            } else if (!strcmp(key, "EXIT")) {
+                return false;
+            } else if (!strcmp(key, "OK")) {
                 snprintf(out, out_size, "%s", text);
                 return true;
+            } else if (!strcmp(key, "EN") || !strcmp(key, "RU")) {
+                is_ru = !strcmp(key, "RU");
+                st_row = 0; st_col = 0;
+            } else if (!strcmp(key, "CAPS")) {
+                is_caps = !is_caps;
             } else {
-                st_row = (st_row + 1) % 5;
-                if (st_col > kb.counts[st_row] - 1) st_col = kb.counts[st_row] - 1;
-                b_count = 1;
+                size_t l = strlen(text);
+                if (l + 1 < sizeof(text)) {
+                    char c = key[0];
+                    if (!is_caps && !is_ru) c = (char)tolower((unsigned char)c);
+                    text[l] = c; text[l + 1] = 0;
+                }
             }
-            last_b = now;
             draw();
         }
         if (k85_ab_held(500)) {
@@ -191,3 +192,5 @@ void k85_area_show(const char *const lines[], int count, const char *title) {
         vTaskDelay(pdMS_TO_TICKS(30));
     }
 }
+
+
