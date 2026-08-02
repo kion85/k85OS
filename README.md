@@ -81,11 +81,11 @@ idf.py -p COM_PORT monitor
 
 ## Notes
 
-- PSRAM must be configured as **Octal mode** in `menuconfig` (`Component config → ESP PSRAM`) for N8R8-variant chips — Quad mode will not work correctly on this hardware.
+- PSRAM must be configured as **Octal mode** in `menuconfig` (`Component config → ESP PSRAM`) for N8R8-variant chips - Quad mode will not work correctly on this hardware.
 
 - Config/high scores are stored on-device via LittleFS (`storage` partition, see `partitions.csv`).
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
+MIT - see [LICENSE](LICENSE)
 
