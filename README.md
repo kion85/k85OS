@@ -1,4 +1,4 @@
-﻿
+﻿firmware for M5stickS3
 # k85OS
 
 Custom firmware for M5Stack-family devices (ESP32-S3), written in C++ on ESP-IDF v5.3.1.
