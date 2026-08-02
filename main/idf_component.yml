@@ -1,0 +1,5 @@
+dependencies:
+  m5stack/m5unified: "*"
+  m5stack/m5gfx: "*"
+  joltwallet/littlefs: "*"
+  espressif/cjson: "*"
