@@ -1,4 +1,4 @@
-﻿#include "k85os_menu.h"
+#include "k85os_menu.h"
 #include "common.h"
 #include "theme.h"
 #include "battery.h"
@@ -12,6 +12,8 @@
 #include "esp_flash.h"
 #include "esp_system.h"
 #include "esp_littlefs.h"
+#include "esp_ota_ops.h"
+#include "esp_wifi.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -19,12 +21,13 @@
 #include <cstdio>
 #include <cstring>
 
-#define K85_BIOS_ITEM_COUNT 10
+#define K85_BIOS_ITEM_COUNT 14
 #define K85_BIOS_VISIBLE_ROWS 6
 
 static const char *k85_bios_labels[K85_BIOS_ITEM_COUNT] = {
     "WiFi module", "Bluetooth module", "OTA lock (secure)",
     "RAM / ROM info", "Chip info", "Uptime",
+    "Active OTA slot", "Rollback firmware", "MAC address", "Battery voltage",
     "Wipe WiFi networks", "Reset config", "Factory reset",
     "Reboot",
 };
@@ -46,6 +49,11 @@ static void bios_value_str(char *out, size_t out_size, int idx) {
         case 0: snprintf(out, out_size, "%s", g_config.wifi_disabled ? "OFF" : "ON"); break;
         case 1: snprintf(out, out_size, "%s", g_config.bt_disabled ? "OFF" : "ON"); break;
         case 2: snprintf(out, out_size, "%s", g_config.ota_locked ? "LOCKED" : "unlocked"); break;
+        case 6: {
+            const esp_partition_t *p = esp_ota_get_running_partition();
+            snprintf(out, out_size, "%s", p ? p->label : "?");
+            break;
+        }
         default: out[0] = 0;
     }
 }
@@ -108,6 +116,40 @@ static void show_uptime(void) {
     wait_ab_exit();
 }
 
+static void show_active_slot(void) {
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    const esp_partition_t *next = esp_ota_get_next_update_partition(nullptr);
+    char msg[128];
+    snprintf(msg, sizeof(msg),
+        "Running: %s\n@ 0x%06X\nOther slot: %s\nA+B=back",
+        running ? running->label : "?", running ? (unsigned)running->address : 0,
+        next ? next->label : "?");
+    k85_show_message(msg);
+    wait_ab_exit();
+}
+
+static void show_mac_address(void) {
+    uint8_t mac[6];
+    esp_wifi_get_mac(WIFI_IF_STA, mac);
+    char msg[80];
+    snprintf(msg, sizeof(msg), "STA MAC:\n%02X:%02X:%02X:%02X:%02X:%02X\nA+B=back",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    k85_show_message(msg);
+    wait_ab_exit();
+}
+
+static void show_battery_voltage(void) {
+    int32_t mv = M5.Power.getBatteryVoltage();
+    char msg[64];
+    if (mv > 0) {
+        snprintf(msg, sizeof(msg), "Battery: %.2f V\nA+B=back", mv / 1000.0f);
+    } else {
+        snprintf(msg, sizeof(msg), "Battery: N/A\nA+B=back");
+    }
+    k85_show_message(msg);
+    wait_ab_exit();
+}
+
 static bool confirm_action(const char *label) {
     char msg[80];
     snprintf(msg, sizeof(msg), "%s?\nB=confirm A+B=cancel", label);
@@ -118,6 +160,38 @@ static bool confirm_action(const char *label) {
         if (k85_btn_b_pressed()) return true;
         vTaskDelay(pdMS_TO_TICKS(30));
     }
+}
+
+static void run_rollback(void) {
+    const esp_partition_t *next = esp_ota_get_next_update_partition(nullptr);
+    if (!next) {
+        k85_show_message("No other slot found\nA+B=back");
+        wait_ab_exit();
+        return;
+    }
+
+    char msg[160];
+    snprintf(msg, sizeof(msg),
+        "Rollback to %s?\nWARNING: if that slot\nis empty/broken,\ndevice may hang.\nB=confirm A+B=cancel",
+        next->label);
+    k85_show_message(msg);
+
+    while (true) {
+        k85_input_update();
+        if (k85_ab_held(500)) { k85_wait_ab_release(); return; }
+        if (k85_btn_b_pressed()) break;
+        vTaskDelay(pdMS_TO_TICKS(30));
+    }
+
+    esp_err_t err = esp_ota_set_boot_partition(next);
+    if (err != ESP_OK) {
+        k85_show_message("Rollback failed\nA+B=back");
+        wait_ab_exit();
+        return;
+    }
+    k85_show_message("Rolling back...\nRebooting");
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    esp_restart();
 }
 
 static void bios_draw(void) {
@@ -177,7 +251,11 @@ static void bios_apply(int idx) {
         case 3: show_ram_rom_info(); break;
         case 4: show_chip_info(); break;
         case 5: show_uptime(); break;
-        case 6:
+        case 6: show_active_slot(); break;
+        case 7: run_rollback(); break;
+        case 8: show_mac_address(); break;
+        case 9: show_battery_voltage(); break;
+        case 10:
             if (confirm_action("Wipe WiFi networks")) {
                 g_config.wifi_saved = false;
                 g_config.wifi_ssid[0] = 0;
@@ -188,7 +266,7 @@ static void bios_apply(int idx) {
                 wait_ab_exit();
             }
             break;
-        case 7:
+        case 11:
             if (confirm_action("Reset config to defaults")) {
                 k85_config_defaults(&g_config);
                 k85_config_save();
@@ -196,7 +274,7 @@ static void bios_apply(int idx) {
                 wait_ab_exit();
             }
             break;
-        case 8:
+        case 12:
             if (confirm_action("FACTORY RESET (wipe all data)")) {
                 k85_config_defaults(&g_config);
                 k85_config_save();
@@ -206,7 +284,7 @@ static void bios_apply(int idx) {
                 esp_restart();
             }
             break;
-        case 9:
+        case 13:
             if (confirm_action("Reboot device")) {
                 esp_restart();
             }

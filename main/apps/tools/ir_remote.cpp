@@ -1,4 +1,4 @@
-﻿#include "ir_remote.h"
+#include "ir_remote.h"
 #include "common.h"
 #include "theme.h"
 #include "battery.h"
@@ -30,6 +30,12 @@
 #define NEC_BIT_0_SPACE 560
 #define NEC_BIT_1_SPACE 1690
 
+#define SIRC_HEADER_MARK 2400
+#define SIRC_HEADER_SPACE 600
+#define SIRC_BIT_SPACE 600
+#define SIRC_BIT_0_MARK 600
+#define SIRC_BIT_1_MARK 1200
+
 #define K85_IR_MAX_CODES 16
 #define K85_IR_FILE "/flash/k85_ir_codes.txt"
 
@@ -38,6 +44,25 @@ struct K85IrCode {
     uint16_t address;
     uint8_t command;
 };
+
+// ---------- Брендовая база (проверенные коды, best-effort — как у любого
+// универсального пульта, может не подойти к конкретной модели) ----------
+enum K85IrProtocol { IR_PROTO_NEC, IR_PROTO_SAMSUNG32, IR_PROTO_SIRC };
+
+struct K85IrBrandCode {
+    const char *name;
+    K85IrProtocol protocol;
+    uint16_t address;
+    uint16_t command;
+};
+
+static const K85IrBrandCode K85_IR_BRAND_DB[] = {
+    {"Samsung (2014+)",   IR_PROTO_SAMSUNG32, 0x0007, 0x0002},
+    {"Samsung (older)",   IR_PROTO_SAMSUNG32, 0x000E, 0x000C},
+    {"LG / Haier (NEC)",  IR_PROTO_NEC,       0x0004, 0x0008},
+    {"Sony",              IR_PROTO_SIRC,      0x0001, 0x0015},
+};
+#define K85_IR_BRAND_COUNT (int)(sizeof(K85_IR_BRAND_DB) / sizeof(K85_IR_BRAND_DB[0]))
 
 static rmt_channel_handle_t s_tx_chan = nullptr;
 static rmt_channel_handle_t s_rx_chan = nullptr;
@@ -114,7 +139,9 @@ static uint32_t nec_raw(uint16_t address, uint8_t command) {
     return raw;
 }
 
-static void encode_nec(uint32_t raw_data, rmt_symbol_word_t *symbols, size_t *symbol_count) {
+// Общая NEC-таймингов схема (используется и для NEC, и для Samsung32 — те же
+// длительности импульсов, разница только в содержимом 32-битного кадра).
+static void encode_nec_family(uint32_t raw_data, rmt_symbol_word_t *symbols, size_t *symbol_count) {
     size_t idx = 0;
     symbols[idx].duration0 = NEC_HEADER_MARK; symbols[idx].level0 = 1;
     symbols[idx].duration1 = NEC_HEADER_SPACE; symbols[idx].level1 = 0;
@@ -131,18 +158,69 @@ static void encode_nec(uint32_t raw_data, rmt_symbol_word_t *symbols, size_t *sy
     *symbol_count = idx;
 }
 
-static bool send_nec(uint16_t address, uint8_t command) {
-    uint32_t raw = nec_raw(address, command);
-    rmt_symbol_word_t symbols[68];
-    size_t symbol_count = 0;
-    encode_nec(raw, symbols, &symbol_count);
+// Samsung32: та же схема таймингов, что и NEC, но 32 бита = address(16) + command(16)
+// без инверсии старшего байта (в отличие от классического NEC).
+static uint32_t samsung32_raw(uint16_t address, uint16_t command) {
+    return ((uint32_t)command << 16) | (uint32_t)address;
+}
 
+// Sony SIRC: 12 бит (7 бит команда + 5 бит адрес), LSB first, header 2400/600,
+// бит '0' = mark 600/space 600, бит '1' = mark 1200/space 600.
+static void encode_sirc(uint16_t address, uint16_t command, rmt_symbol_word_t *symbols, size_t *symbol_count) {
+    uint16_t data = ((address & 0x1F) << 7) | (command & 0x7F);
+    size_t idx = 0;
+    symbols[idx].duration0 = SIRC_HEADER_MARK; symbols[idx].level0 = 1;
+    symbols[idx].duration1 = SIRC_HEADER_SPACE; symbols[idx].level1 = 0;
+    idx++;
+    for (int i = 0; i < 12; i++) {
+        bool bit1 = (data & (1U << i)) != 0;
+        symbols[idx].duration0 = bit1 ? SIRC_BIT_1_MARK : SIRC_BIT_0_MARK;
+        symbols[idx].level0 = 1;
+        symbols[idx].duration1 = SIRC_BIT_SPACE;
+        symbols[idx].level1 = 0;
+        idx++;
+    }
+    *symbol_count = idx;
+}
+
+static bool transmit_symbols(rmt_symbol_word_t *symbols, size_t symbol_count) {
     rmt_transmit_config_t tx_cfg = {};
     tx_cfg.loop_count = 0;
     esp_err_t ret = rmt_transmit(s_tx_chan, s_copy_encoder, symbols,
                                   symbol_count * sizeof(rmt_symbol_word_t), &tx_cfg);
     if (ret == ESP_OK) ret = rmt_tx_wait_all_done(s_tx_chan, 1000);
     return ret == ESP_OK;
+}
+
+static bool send_nec(uint16_t address, uint8_t command) {
+    uint32_t raw = nec_raw(address, command);
+    rmt_symbol_word_t symbols[68];
+    size_t symbol_count = 0;
+    encode_nec_family(raw, symbols, &symbol_count);
+    return transmit_symbols(symbols, symbol_count);
+}
+
+static bool send_ir_brand_code(const K85IrBrandCode &code) {
+    rmt_symbol_word_t symbols[68];
+    size_t symbol_count = 0;
+
+    switch (code.protocol) {
+        case IR_PROTO_NEC: {
+            uint32_t raw = nec_raw(code.address, (uint8_t)code.command);
+            encode_nec_family(raw, symbols, &symbol_count);
+            break;
+        }
+        case IR_PROTO_SAMSUNG32: {
+            uint32_t raw = samsung32_raw(code.address, code.command);
+            encode_nec_family(raw, symbols, &symbol_count);
+            break;
+        }
+        case IR_PROTO_SIRC: {
+            encode_sirc(code.address, code.command, symbols, &symbol_count);
+            break;
+        }
+    }
+    return transmit_symbols(symbols, symbol_count);
 }
 
 static bool decode_nec(rmt_symbol_word_t *symbols, uint32_t *out_raw) {
@@ -222,6 +300,22 @@ static void run_ir_send(void) {
     wait_ab_exit();
 }
 
+// ---------- UI: Brand codes ----------
+static void run_ir_brand_codes(void) {
+    const char *names[K85_IR_BRAND_COUNT + 1];
+    for (int i = 0; i < K85_IR_BRAND_COUNT; i++) names[i] = K85_IR_BRAND_DB[i].name;
+    names[K85_IR_BRAND_COUNT] = "Back";
+
+    while (true) {
+        int idx = k85_run_list_menu("TV BRAND POWER", names, K85_IR_BRAND_COUNT + 1, nullptr);
+        if (idx < 0 || idx == K85_IR_BRAND_COUNT) return;
+
+        bool ok = send_ir_brand_code(K85_IR_BRAND_DB[idx]);
+        k85_show_message(ok ? "Sent!\nA+B=back" : "Send failed\nA+B=back");
+        wait_ab_exit();
+    }
+}
+
 // ---------- UI: Learn ----------
 static void run_ir_learn(void) {
     char name[16] = "";
@@ -298,18 +392,18 @@ void k85_run_ir_remote(void) {
         return;
     }
 
-    M5.Speaker.end(); // обязательно для корректного приёма (см. документацию M5Stack по StickS3 IR)
+    M5.Speaker.end();
 
-    static const char *items[] = {"Send", "Learn new", "Delete", "Back"};
+    static const char *items[] = {"Send", "Learn new", "Delete", "TV Brand Power", "Back"};
     while (true) {
-        int idx = k85_run_list_menu("IR REMOTE", items, 4, nullptr);
-        if (idx < 0 || idx == 3) break;
+        int idx = k85_run_list_menu("IR REMOTE", items, 5, nullptr);
+        if (idx < 0 || idx == 4) break;
         if (idx == 0) run_ir_send();
         else if (idx == 1) run_ir_learn();
         else if (idx == 2) run_ir_delete();
+        else if (idx == 3) run_ir_brand_codes();
     }
 
     M5.Speaker.begin();
     k85_apply_sound_volume();
 }
-
