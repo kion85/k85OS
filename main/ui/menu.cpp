@@ -15,6 +15,7 @@
 #include "tools_menu.h"
 #include "games_menu.h"
 #include "rtc_ntp.h"
+#include "clock_menu.h"
 #include "wifi.h"
 #include "M5Unified.h"
 
@@ -363,7 +364,7 @@ static void run_action(int index) {
     } else if (!strcmp(item, "Cube")) {
         run_cube();
     } else if (!strcmp(item, "Clock")) {
-        run_clock();
+        k85_run_clock_menu();
     } else if (!strcmp(item, "Games")) {
         k85_run_games_menu();
     } else if (!strcmp(item, "Colors")) {
@@ -389,6 +390,8 @@ void k85_menu_activate(void) {
     run_action(s_selected);
     k85_menu_draw();
 }
+
+
 
 
 

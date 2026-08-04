@@ -1,4 +1,4 @@
-#include "config.h"
+﻿#include "config.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -51,9 +51,13 @@ void k85_config_defaults(k85_config_t *cfg) {
     cfg->bootstyle_idx    = 0;
     cfg->kb_layout        = 0;
     cfg->sound_volume     = 20;
+    cfg->utc_offset       = 3; // MSK по умолчанию
+    cfg->ota_locked = false;
+    cfg->wifi_disabled = false;
+    cfg->bt_disabled = false;
     cfg->wifi_saved       = false;
     cfg->wifi_networks_count = 0;
-    // high_scores, step_count, step_record, step_date — уже 0/""
+    // high_scores, step_count, step_record, step_date вЂ” СѓР¶Рµ 0/""
 }
 
 // ============================ JSON <-> struct ============================
@@ -73,6 +77,10 @@ static cJSON *cfg_to_json(const k85_config_t *c) {
     cJSON_AddNumberToObject(root, "bootstyle_idx", c->bootstyle_idx);
     cJSON_AddNumberToObject(root, "kb_layout", c->kb_layout);
     cJSON_AddNumberToObject(root, "sound_volume", c->sound_volume);
+    cJSON_AddNumberToObject(root, "utc_offset", c->utc_offset);
+    cJSON_AddBoolToObject(root, "ota_locked", c->ota_locked);
+    cJSON_AddBoolToObject(root, "wifi_disabled", c->wifi_disabled);
+    cJSON_AddBoolToObject(root, "bt_disabled", c->bt_disabled);
 
     cJSON *hs = cJSON_CreateObject();
     cJSON_AddNumberToObject(hs, "2048",    c->high_scores.game_2048);
@@ -119,6 +127,10 @@ static void cfg_from_json(cJSON *root, k85_config_t *out) {
     GET_INT("bootstyle_idx", bootstyle_idx);
     GET_INT("kb_layout", kb_layout);
     GET_INT("sound_volume", sound_volume);
+    GET_INT("utc_offset", utc_offset);
+    { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "ota_locked"); if (_x) out->ota_locked = cJSON_IsTrue(_x); }
+    { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "wifi_disabled"); if (_x) out->wifi_disabled = cJSON_IsTrue(_x); }
+    { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "bt_disabled"); if (_x) out->bt_disabled = cJSON_IsTrue(_x); }
 #undef GET_INT
 
     cJSON *hs = cJSON_GetObjectItemCaseSensitive(root, "high_scores");
@@ -172,7 +184,7 @@ static void cfg_from_json(cJSON *root, k85_config_t *out) {
     if (sd && cJSON_IsString(sd)) set_str(out->step_date, sizeof(out->step_date), sd->valuestring);
 }
 
-// Аналог _deep_merge_defaults из MicroPython
+// РђРЅР°Р»РѕРі _deep_merge_defaults РёР· MicroPython
 static void deep_merge(cJSON *dst, const cJSON *src) {
     const cJSON *item = NULL;
     cJSON_ArrayForEach(item, src) {
@@ -295,3 +307,4 @@ void k85_set_sound_volume(int v) {
     g_config.sound_volume = v;
     k85_config_save();
 }
+

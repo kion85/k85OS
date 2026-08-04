@@ -1,6 +1,8 @@
 ﻿#include "boot_screen.h"
 #include "config.h"
 #include "theme.h"
+#include "input.h"
+#include "../apps/k85os_menu.h"
 
 #include "M5Unified.h"
 #include "esp_timer.h"
@@ -126,8 +128,32 @@ static void boot_static_text(int title_y) {
     vTaskDelay(pdMS_TO_TICKS(K85_BOOT_DURATION_MS));
 }
 
+static bool check_bios_entry(void) {
+    // Два нажатия A за первые 3 секунды загрузки -> открыть k85os-menu
+    int64_t deadline_us = esp_timer_get_time() + 3000000;
+    int press_count = 0;
+    bool a_was_down = false;
+
+    while (esp_timer_get_time() < deadline_us) {
+        k85_input_update();
+        bool a_down = k85_btn_a_is_down();
+        if (a_down && !a_was_down) {
+            press_count++;
+            if (press_count >= 2) return true;
+        }
+        a_was_down = a_down;
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    return false;
+}
+
 void k85_show_boot_screen(void) {
     int title_y = boot_draw_title();
+
+    if (check_bios_entry()) {
+        k85_run_bios_menu();
+        return;
+    }
 
     int style = g_config.bootstyle_idx;
     if (style < 0 || style >= K85_BOOT_STYLE_COUNT) style = 0;
@@ -138,5 +164,6 @@ void k85_show_boot_screen(void) {
         default: boot_static_text(title_y); break;
     }
 }
+
 
 

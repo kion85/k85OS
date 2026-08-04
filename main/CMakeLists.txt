@@ -39,6 +39,9 @@
          "apps/tools/bt_scan.cpp"
          "apps/tools/terminal.cpp"
          "apps/tools/ir_remote.cpp"
+         "apps/clock_menu.cpp"
+         "apps/k85os_menu.cpp"
+         "net/ota.cpp"
          "apps/games/snake.cpp"
          "apps/games/tetris.cpp"
          "apps/games/game2048.cpp"
@@ -50,7 +53,7 @@
          "ble_hid/esp_hidd_prf_api.c"
          "ble_hid/air_mouse_ble.cpp"
     INCLUDE_DIRS "." "core" "ui" "steps" "system" "net" "apps" "apps/games" "apps/tools" "ble_hid"
-    PRIV_REQUIRES json esp_netif esp_driver_tsens esp_wifi nvs_flash esp_event esp_driver_i2c esp_driver_gpio bt esp_driver_rmt
+    PRIV_REQUIRES json esp_netif esp_driver_tsens esp_wifi nvs_flash esp_event esp_driver_i2c esp_driver_gpio bt esp_driver_rmt esp_https_ota esp_http_client app_update mbedtls
 )
 
 set_source_files_properties(
@@ -59,6 +62,10 @@ set_source_files_properties(
     "ble_hid/esp_hidd_prf_api.c"
     PROPERTIES COMPILE_OPTIONS "-Wno-unused-const-variable"
 )
+
+
+
+
 
 
 

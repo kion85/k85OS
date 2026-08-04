@@ -16,6 +16,7 @@
 #include "ui/menu.h"
 #include "ui/lock_screen.h"
 #include "ui/quick_settings.h"
+#include "net/ota.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -64,6 +65,8 @@ extern "C" void app_main(void) {
     k85_apply_sound_volume();
 
     k85_show_boot_screen();
+
+    k85_ota_start_background_check(6 * 60 * 60 * 1000); // проверка раз в 6 часов
 
     k85_menu_init();
     k85_menu_draw();
@@ -119,6 +122,7 @@ extern "C" void app_main(void) {
         vTaskDelay(pdMS_TO_TICKS(30));
     }
 }
+
 
 
 

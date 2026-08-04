@@ -1,6 +1,8 @@
 ﻿#include "tools_menu.h"
 #include "list_menu.h"
 #include "common.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "tools/wifi_manager.h"
 #include "tools/i2c_scanner.h"
 #include "tools/gpio_control.h"
@@ -9,6 +11,7 @@
 #include "tools/melodies.h"
 #include "tools/air_mouse.h"
 #include "../ble_hid/air_mouse_ble.h"
+#include "core/config.h"
 #include "tools/files.h"
 #include "tools/music_player.h"
 #include "tools/mic_test.h"
@@ -28,7 +31,14 @@ void k85_run_tools_menu(void) {
     while (true) {
         int idx = k85_run_list_menu("TOOLS", TOOLS_ITEMS, TOOLS_COUNT, nullptr);
         if (idx < 0 || idx == TOOLS_COUNT - 1) return;
-        if (idx == 0) k85_run_wifi_manager();
+        if (idx == 0) {
+            if (g_config.wifi_disabled) {
+                k85_show_message("WiFi disabled\n(k85os-menu)");
+                vTaskDelay(pdMS_TO_TICKS(1000));
+            } else {
+                k85_run_wifi_manager();
+            }
+        }
         else if (idx == 1) k85_run_color_test();
         else if (idx == 2) k85_run_bt_scan();
         else if (idx == 3) k85_run_i2c_scan();
@@ -38,13 +48,30 @@ void k85_run_tools_menu(void) {
         else if (idx == 7) k85_run_melody_player();
         else if (idx == 8) k85_run_mic_test();
         else if (idx == 9) k85_run_air_mouse();
-        else if (idx == 10) k85_run_air_mouse_ble();
-        else if (idx == 11) k85_run_wifi_hotspot();
+        else if (idx == 10) {
+            if (g_config.bt_disabled) {
+                k85_show_message("Bluetooth disabled\n(k85os-menu)");
+                vTaskDelay(pdMS_TO_TICKS(1000));
+            } else {
+                k85_run_air_mouse_ble();
+            }
+        }
+        else if (idx == 11) {
+            if (g_config.wifi_disabled) {
+                k85_show_message("WiFi disabled\n(k85os-menu)");
+                vTaskDelay(pdMS_TO_TICKS(1000));
+            } else {
+                k85_run_wifi_hotspot();
+            }
+        }
         else if (idx == 12) k85_run_calculator();
         else if (idx == 13) { if (k85_run_terminal()) return; }
         else if (idx == 14) k85_run_ir_remote();
     }
 }
+
+
+
 
 
 

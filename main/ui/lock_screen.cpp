@@ -17,7 +17,8 @@
 #include <cstring>
 #include <cstdio>
 
-#define K85_LOCK_PARTICLES 20
+#define K85_LOCK_PARTICLES 14
+#define K85_LOCK_STARS 25
 
 struct LockParticle {
     float x, y, vx, vy;
@@ -25,7 +26,13 @@ struct LockParticle {
     uint32_t color;
 };
 
+struct LockStar {
+    int16_t x, y;
+    uint8_t phase;
+};
+
 static LockParticle s_particles[K85_LOCK_PARTICLES];
+static LockStar s_stars[K85_LOCK_STARS];
 static bool s_particles_init = false;
 
 static float rand_offset(float scale) {
@@ -34,42 +41,50 @@ static float rand_offset(float scale) {
 
 static void init_particles() {
     if (s_particles_init) return;
-    static const uint32_t colors[] = {0x00FFFF, 0xFF00FF, 0xFFFF00, 0x00FF00, 0xFF6600};
+    static const uint32_t colors[] = {0x88CCFF, 0xFFFFFF, 0xCC99FF, 0x99FFEE, 0xFFDD99};
     int w = M5.Display.width();
     int h = M5.Display.height();
     for (int i = 0; i < K85_LOCK_PARTICLES; i++) {
         s_particles[i].x = (float)(esp_random() % w);
         s_particles[i].y = (float)(esp_random() % h);
-        s_particles[i].vx = rand_offset(10.0f);
-        s_particles[i].vy = rand_offset(10.0f);
-        s_particles[i].size = (int)(esp_random() % 3) + 1;
+        s_particles[i].vx = rand_offset(6.0f);
+        s_particles[i].vy = rand_offset(6.0f);
+        s_particles[i].size = (int)(esp_random() % 2) + 1;
         s_particles[i].color = colors[esp_random() % 5];
+    }
+    for (int i = 0; i < K85_LOCK_STARS; i++) {
+        s_stars[i].x = (int16_t)(esp_random() % w);
+        s_stars[i].y = (int16_t)(esp_random() % h);
+        s_stars[i].phase = (uint8_t)(esp_random() % 255);
     }
     s_particles_init = true;
 }
 
-// Аналог draw_lock_screen()
 static void draw_lock_screen() {
-    int mode_idx = g_config.battery_mode_idx;
-    const char *mode = (mode_idx >= 0 && mode_idx < K85_BATTERY_MODE_COUNT)
-                            ? k85_battery_modes[mode_idx] : "Balanced";
     int w = M5.Display.width();
     int h = M5.Display.height();
 
-    if (!strcmp(mode, "SuperEco")) {
-        init_particles();
-        M5.Display.fillScreen(0x000000);
-        for (int i = 0; i < K85_LOCK_PARTICLES; i++) {
-            LockParticle &p = s_particles[i];
-            p.x += p.vx * 0.1f;
-            p.y += p.vy * 0.1f;
-            p.vy += 0.05f;
-            if (p.x < 0 || p.x > w) { p.vx *= -0.8f; if (p.x < 0) p.x = 0; if (p.x > w) p.x = (float)w; }
-            if (p.y < 0 || p.y > h) { p.vy *= -0.8f; if (p.y < 0) p.y = 0; if (p.y > h) p.y = (float)h; }
-            M5.Display.fillCircle((int)p.x, (int)p.y, p.size, p.color);
-        }
-    } else {
-        M5.Display.fillScreen(0x000000);
+    init_particles();
+    M5.Display.fillScreen(0x000000);
+
+    for (int i = 0; i < K85_LOCK_STARS; i++) {
+        LockStar &s = s_stars[i];
+        s.phase += 3;
+        int brightness = s.phase < 128 ? s.phase * 2 : (255 - s.phase) * 2;
+        if (brightness < 40) brightness = 40;
+        uint8_t v = (uint8_t)brightness;
+        uint32_t col = ((uint32_t)v << 16) | ((uint32_t)v << 8) | v;
+        M5.Display.drawPixel(s.x, s.y, col);
+    }
+
+    for (int i = 0; i < K85_LOCK_PARTICLES; i++) {
+        LockParticle &p = s_particles[i];
+        p.x += p.vx * 0.1f;
+        p.y += p.vy * 0.1f;
+        p.vy += 0.05f;
+        if (p.x < 0 || p.x > w) { p.vx *= -0.8f; if (p.x < 0) p.x = 0; if (p.x > w) p.x = (float)w; }
+        if (p.y < 0 || p.y > h) { p.vy *= -0.8f; if (p.y < 0) p.y = 0; if (p.y > h) p.y = (float)h; }
+        M5.Display.fillCircle((int)p.x, (int)p.y, p.size, p.color);
     }
 
     const char *t = k85_get_time_str();

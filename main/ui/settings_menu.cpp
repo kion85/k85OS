@@ -9,6 +9,8 @@
 #include "wifi.h"
 #include "common.h"
 #include "boot_screen.h"
+#include "../net/ota.h"
+#include "../core/version.h"
 
 #include "M5Unified.h"
 #include "freertos/FreeRTOS.h"
@@ -17,16 +19,18 @@
 #include <cstdio>
 #include <cstddef>
 
-#define K85_SETTINGS_ITEM_COUNT 9
+#define K85_SETTINGS_ITEM_COUNT 10
 #define K85_SETTINGS_BACK_IDX   (K85_SETTINGS_ITEM_COUNT - 1)
 
 static const char *k85_settings_labels[K85_SETTINGS_ITEM_COUNT] = {
     "Theme", "Brightness", "Battery mode", "Boot style",
     "Device name", "Sound volume", "WiFi", "Reset steps",
-    "Back",
+    "Check for updates", "Back",
 };
 
 static int s_selected = 0;
+static int s_scroll_top = 0;
+#define K85_SETTINGS_VISIBLE_ROWS 6
 
 static void settings_value_str(char *out, size_t out_size, int idx) {
     switch (idx) {
@@ -42,6 +46,11 @@ static void settings_value_str(char *out, size_t out_size, int idx) {
         case 4: snprintf(out, out_size, "%s", k85_get_device_name()); break;
         case 5: snprintf(out, out_size, "%d%%", k85_get_sound_volume()); break;
         case 6:
+            if (g_config.wifi_disabled) {
+                k85_show_message("WiFi module disabled\n(k85os-menu)");
+                vTaskDelay(pdMS_TO_TICKS(1000));
+                break;
+            }
             if (g_config.wifi_saved) {
                 snprintf(out, out_size, "%s%s", g_config.wifi_ssid,
                          k85_wifi_is_connected() ? " (on)" : " (off)");
@@ -50,12 +59,28 @@ static void settings_value_str(char *out, size_t out_size, int idx) {
             }
             break;
         case 7: snprintf(out, out_size, "%d", g_config.step_count); break;
-        case 8: out[0] = 0; break; // Back - без значения
+        case 8: snprintf(out, out_size, "v%s", K85_FW_VERSION); break;
+        case 9: out[0] = 0; break; // Back - без значения
         default: out[0] = 0;
     }
 }
 
+static void settings_clamp_scroll(void) {
+    if (s_selected < s_scroll_top) {
+        s_scroll_top = s_selected;
+    }
+    if (s_selected >= s_scroll_top + K85_SETTINGS_VISIBLE_ROWS) {
+        s_scroll_top = s_selected - K85_SETTINGS_VISIBLE_ROWS + 1;
+    }
+    if (s_scroll_top < 0) s_scroll_top = 0;
+    int max_top = K85_SETTINGS_ITEM_COUNT - K85_SETTINGS_VISIBLE_ROWS;
+    if (max_top < 0) max_top = 0;
+    if (s_scroll_top > max_top) s_scroll_top = max_top;
+}
+
 static void settings_draw(void) {
+    settings_clamp_scroll();
+
     uint32_t bg = k85_get_bg();
     uint32_t fg = k85_get_fg();
     uint32_t accent = k85_get_accent();
@@ -68,7 +93,10 @@ static void settings_draw(void) {
 
     int y = 20;
     char val[40];
-    for (int i = 0; i < K85_SETTINGS_ITEM_COUNT; i++) {
+    int last_visible = s_scroll_top + K85_SETTINGS_VISIBLE_ROWS;
+    if (last_visible > K85_SETTINGS_ITEM_COUNT) last_visible = K85_SETTINGS_ITEM_COUNT;
+
+    for (int i = s_scroll_top; i < last_visible; i++) {
         bool sel = (i == s_selected);
         M5.Display.setCursor(6, y);
         M5.Display.setTextColor(sel ? accent : fg, bg);
@@ -81,6 +109,20 @@ static void settings_draw(void) {
             M5.Display.print(val);
         }
         y += 14;
+    }
+
+    // Индикатор скролла справа
+    if (K85_SETTINGS_ITEM_COUNT > K85_SETTINGS_VISIBLE_ROWS) {
+        if (s_scroll_top > 0) {
+            M5.Display.setCursor(230, 20);
+            M5.Display.setTextColor(0xAAAAAA, bg);
+            M5.Display.print("^");
+        }
+        if (last_visible < K85_SETTINGS_ITEM_COUNT) {
+            M5.Display.setCursor(230, 20 + (K85_SETTINGS_VISIBLE_ROWS - 1) * 14);
+            M5.Display.setTextColor(0xAAAAAA, bg);
+            M5.Display.print("v");
+        }
     }
 
     M5.Display.setTextColor(0xAAAAAA, bg);
@@ -115,6 +157,11 @@ static void settings_apply_item(int idx) {
             break;
         }
         case 6:
+            if (g_config.wifi_disabled) {
+                k85_show_message("WiFi module disabled\n(k85os-menu)");
+                vTaskDelay(pdMS_TO_TICKS(1000));
+                break;
+            }
             if (g_config.wifi_saved) {
                 k85_show_message("Connecting WiFi...");
                 bool ok = k85_wifi_connect_saved();
@@ -128,6 +175,59 @@ static void settings_apply_item(int idx) {
         case 7:
             k85_reset_step_counter();
             break;
+        case 8: {
+            if (!k85_wifi_is_connected()) {
+                k85_show_message("Connect WiFi first\nA+B=back");
+                while (true) {
+                    k85_input_update();
+                    if (k85_ab_held(500)) { k85_wait_ab_release(); break; }
+                    vTaskDelay(pdMS_TO_TICKS(30));
+                }
+                break;
+            }
+            char ver[16];
+            char url[256];
+            k85_show_message("Checking...");
+            if (!k85_ota_check_update(ver, sizeof(ver), url, sizeof(url))) {
+                k85_show_message("No update found\nA+B=back");
+                while (true) {
+                    k85_input_update();
+                    if (k85_ab_held(500)) { k85_wait_ab_release(); break; }
+                    vTaskDelay(pdMS_TO_TICKS(30));
+                }
+                break;
+            }
+
+            char confirm_msg[64];
+            snprintf(confirm_msg, sizeof(confirm_msg), "Update v%s found\nB=install A+B=cancel", ver);
+            k85_show_message(confirm_msg);
+
+            bool do_install = false;
+            while (true) {
+                k85_input_update();
+                if (k85_ab_held(500)) { k85_wait_ab_release(); do_install = false; break; }
+                if (k85_btn_b_pressed()) { do_install = true; break; }
+                vTaskDelay(pdMS_TO_TICKS(30));
+            }
+            if (!do_install) break;
+
+            k85_show_message("Installing 0%...");
+            static char progress_msg[32];
+            bool ok = k85_ota_perform_update(url, [](int percent) {
+                snprintf(progress_msg, sizeof(progress_msg), "Installing %d%%...", percent);
+                k85_show_message(progress_msg);
+            });
+            // Если дошли сюда — не удалось (успех перезагружает устройство сам)
+            if (!ok) {
+                k85_show_message("Update failed\nA+B=back");
+                while (true) {
+                    k85_input_update();
+                    if (k85_ab_held(500)) { k85_wait_ab_release(); break; }
+                    vTaskDelay(pdMS_TO_TICKS(30));
+                }
+            }
+            break;
+        }
         default:
             break;
     }
@@ -136,6 +236,7 @@ static void settings_apply_item(int idx) {
 
 void k85_run_settings_menu(void) {
     s_selected = 0;
+    s_scroll_top = 0;
     settings_draw();
     while (true) {
         k85_input_update();
@@ -163,4 +264,13 @@ void k85_run_settings_menu(void) {
         vTaskDelay(pdMS_TO_TICKS(30));
     }
 }
+
+
+
+
+
+
+
+
+
 
