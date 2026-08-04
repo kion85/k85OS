@@ -1,6 +1,7 @@
 ﻿#include "wifi.h"
 #include "config.h"
 #include "log.h"
+#include "notifications.h"
 #include "nvs_flash.h"
 
 #include "esp_wifi.h"
@@ -26,13 +27,16 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        bool was_connected = s_connected;
         s_connected = false;
         if (s_wifi_event_group) xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
         k85_log("WiFi disconnected");
+        if (was_connected) k85_notify("WiFi disconnected");
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         s_connected = true;
         if (s_wifi_event_group) xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
         k85_log("WiFi got IP");
+        k85_notify("WiFi connected");
     }
 }
 
@@ -160,4 +164,5 @@ int k85_wifi_get_rssi(void) {
     }
     return 0;
 }
+
 

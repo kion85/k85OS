@@ -15,9 +15,28 @@
 #include "steps/step_counter.h"
 #include "ui/menu.h"
 #include "ui/lock_screen.h"
+#include "ui/quick_settings.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_timer.h"
+
+#define K85_QS_HOLD_MS 800
+static bool s_b_was_down = false;
+static bool s_b_press_armed = false; // нажатие начато в app_main и ещё не развязано
+static bool s_b_long_fired = false;
+static int64_t s_b_down_start_us = 0;
+
+// Пересинхронизация B после блокирующих UI-циклов (шторка, menu_activate, lock_screen).
+// Иначе отпускание B, начатого внутри вложенного меню, читается как новое нажатие:
+// Back в тулсах -> повторное открытие тулсов.
+static void k85_btn_resync(void) {
+    k85_input_update();
+    s_b_was_down = k85_btn_b_is_down();
+    s_b_press_armed = false;
+    s_b_long_fired = false;
+    s_b_down_start_us = 0;
+}
 
 extern "C" void app_main(void) {
     auto m5cfg = M5.config();
@@ -58,6 +77,7 @@ extern "C" void app_main(void) {
         if (k85_power_tick()) {
             k85_lock_screen_loop();
             k85_menu_draw();
+            k85_btn_resync();
             continue;
         }
 
@@ -66,12 +86,42 @@ extern "C" void app_main(void) {
             k85_menu_next();
         }
 
-        if (k85_btn_b_pressed()) {
-            k85_wake_screen();
-            k85_menu_activate();
+        bool b_down_now = k85_btn_b_is_down();
+
+        if (b_down_now && !s_b_was_down) {
+            s_b_press_armed = true;
+            s_b_down_start_us = esp_timer_get_time();
+            s_b_long_fired = false;
         }
+
+        if (b_down_now && s_b_press_armed && !s_b_long_fired) {
+            int64_t held_ms = (esp_timer_get_time() - s_b_down_start_us) / 1000;
+            if (held_ms >= K85_QS_HOLD_MS) {
+                s_b_long_fired = true;
+                k85_wake_screen();
+                k85_quick_settings_open();
+                k85_menu_draw();
+                k85_btn_resync();
+                continue;
+            }
+        }
+
+        if (!b_down_now && s_b_was_down && s_b_press_armed && !s_b_long_fired) {
+            k85_wake_screen();
+            k85_log("app_main SHORT B -> menu_activate()");
+            k85_menu_activate();
+            k85_btn_resync(); // после меню (тулсы и т.п.) B может быть ещё нажат
+            continue;
+        }
+
+        s_b_was_down = b_down_now;
 
         vTaskDelay(pdMS_TO_TICKS(30));
     }
 }
+
+
+
+
+
 

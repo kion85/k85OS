@@ -1,5 +1,7 @@
-#include "power.h"
+﻿#include "power.h"
 #include "config.h"
+#include "battery.h"
+#include "notifications.h"
 #include "M5Unified.h"
 #include "esp_timer.h"
 
@@ -30,7 +32,27 @@ uint32_t k85_idle_timeout_ms(void) {
     return k85_idle_timeouts_ms[idx];
 }
 
+static bool s_notified_15 = false;
+static bool s_notified_5 = false;
+
+static void check_battery_notify(void) {
+    int batt = k85_get_battery();
+    if (batt < 0) return;
+    if (batt <= 5 && !s_notified_5) {
+        k85_notify("Battery low: %d%%", batt);
+        s_notified_5 = true;
+        s_notified_15 = true;
+    } else if (batt <= 15 && !s_notified_15) {
+        k85_notify("Battery: %d%%", batt);
+        s_notified_15 = true;
+    } else if (batt > 20) {
+        s_notified_15 = false;
+        s_notified_5 = false;
+    }
+}
+
 bool k85_power_tick(void) {
+    check_battery_notify();
     if (s_dimmed) return false;
     uint32_t elapsed = now_ms() - s_last_activity;
     if (elapsed > k85_idle_timeout_ms()) {
@@ -50,3 +72,4 @@ void k85_wake_screen(void) {
 }
 
 bool k85_is_dimmed(void) { return s_dimmed; }
+

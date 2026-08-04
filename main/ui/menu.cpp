@@ -7,6 +7,7 @@
 #include "sound.h"
 #include "log.h"
 #include "config.h"
+#include "notifications.h"
 #include "system_info.h"
 #include "logs_screen.h"
 #include "settings_menu.h"
@@ -25,7 +26,7 @@
 
 static const char *const K85_MENU_ITEMS[] = {
     "Low tone", "High tone", "Both tones", "Cube", "Colors",
-    "Clock", "Store", "Tools", "Games", "Settings", "System info", "Logs",
+    "Clock", "Store", "Tools", "Games", "Settings", "System info", "Logs", "Notifications",
 };
 #define K85_MENU_ITEM_COUNT (int)(sizeof(K85_MENU_ITEMS) / sizeof(K85_MENU_ITEMS[0]))
 
@@ -375,6 +376,8 @@ static void run_action(int index) {
         k85_run_system_info();
     } else if (!strcmp(item, "Logs")) {
         k85_run_logs_screen();
+    } else if (!strcmp(item, "Notifications")) {
+        k85_run_notifications_screen();
     } else if (!strcmp(item, "Settings")) {
         k85_run_settings_menu();
     } else {
@@ -386,6 +389,9 @@ void k85_menu_activate(void) {
     run_action(s_selected);
     k85_menu_draw();
 }
+
+
+
 
 
 

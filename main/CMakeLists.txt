@@ -10,9 +10,11 @@
          "core/rtc_ntp.cpp"
          "core/device.cpp"
          "core/boot_screen.cpp"
+         "core/notifications.cpp"
          "ui/common.cpp"
          "ui/menu.cpp"
          "ui/lock_screen.cpp"
+         "ui/quick_settings.cpp"
          "ui/settings_menu.cpp"
          "ui/list_menu.cpp"
          "ui/text_input.cpp"
@@ -36,15 +38,33 @@
          "apps/tools/wifi_hotspot.cpp"
          "apps/tools/bt_scan.cpp"
          "apps/tools/terminal.cpp"
+         "apps/tools/ir_remote.cpp"
          "apps/games/snake.cpp"
          "apps/games/tetris.cpp"
          "apps/games/game2048.cpp"
          "apps/games/race.cpp"
          "apps/games/reaction.cpp"
          "apps/games/flappy.cpp"
-    INCLUDE_DIRS "." "core" "ui" "steps" "system" "net" "apps" "apps/games" "apps/tools"
-    PRIV_REQUIRES json esp_netif esp_driver_tsens esp_wifi nvs_flash esp_event esp_driver_i2c esp_driver_gpio bt
+         "ble_hid/hid_dev.c"
+         "ble_hid/hid_device_le_prf.c"
+         "ble_hid/esp_hidd_prf_api.c"
+         "ble_hid/air_mouse_ble.cpp"
+    INCLUDE_DIRS "." "core" "ui" "steps" "system" "net" "apps" "apps/games" "apps/tools" "ble_hid"
+    PRIV_REQUIRES json esp_netif esp_driver_tsens esp_wifi nvs_flash esp_event esp_driver_i2c esp_driver_gpio bt esp_driver_rmt
 )
+
+set_source_files_properties(
+    "ble_hid/hid_dev.c"
+    "ble_hid/hid_device_le_prf.c"
+    "ble_hid/esp_hidd_prf_api.c"
+    PROPERTIES COMPILE_OPTIONS "-Wno-unused-const-variable"
+)
+
+
+
+
+
+
 
 
 

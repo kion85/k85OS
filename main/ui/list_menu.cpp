@@ -1,5 +1,6 @@
 ﻿#include "list_menu.h"
 #include "theme.h"
+#include "log.h"
 #include "battery.h"
 #include "power.h"
 #include "input.h"
@@ -14,6 +15,7 @@
 
 int k85_run_list_menu(const char *title, const char *const items[], int count,
                        const char *const score_keys[]) {
+    k85_log("list_menu ENTER: title=%s count=%d btnB_down=%d", title, count, (int)k85_btn_b_is_down());
     if (count <= 0) return -1;
     int sel = 0;
     int scroll = 0;
@@ -76,6 +78,7 @@ int k85_run_list_menu(const char *title, const char *const items[], int count,
             }
             if (k85_btn_b_pressed()) {
                 k85_wake_screen();
+                k85_log("list_menu B pressed: title=%s sel=%d item=%s", title, sel, items[sel]);
                 if (!strcmp(items[sel], "Back")) return -1;
                 return sel;
             }
@@ -83,3 +86,5 @@ int k85_run_list_menu(const char *title, const char *const items[], int count,
         }
     }
 }
+
+

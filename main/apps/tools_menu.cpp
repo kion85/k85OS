@@ -8,17 +8,19 @@
 #include "tools/calculator.h"
 #include "tools/melodies.h"
 #include "tools/air_mouse.h"
+#include "../ble_hid/air_mouse_ble.h"
 #include "tools/files.h"
 #include "tools/music_player.h"
 #include "tools/mic_test.h"
 #include "tools/wifi_hotspot.h"
 #include "tools/bt_scan.h"
 #include "tools/terminal.h"
+#include "tools/ir_remote.h"
 
 static const char *TOOLS_ITEMS[] = {
     "WiFi Manager", "Color Test", "Bluetooth Scan", "I2C Scanner",
     "GPIO Control", "Files", "Music Player", "Melodies", "Mic Test",
-    "Air Mouse", "WiFi Hotspot", "Calculator", "Terminal", "Back"
+    "Air Mouse (screen)", "Air Mouse BLE", "WiFi Hotspot", "Calculator", "Terminal", "IR Remote", "Back"
 };
 #define TOOLS_COUNT (int)(sizeof(TOOLS_ITEMS) / sizeof(TOOLS_ITEMS[0]))
 
@@ -36,9 +38,15 @@ void k85_run_tools_menu(void) {
         else if (idx == 7) k85_run_melody_player();
         else if (idx == 8) k85_run_mic_test();
         else if (idx == 9) k85_run_air_mouse();
-        else if (idx == 10) k85_run_wifi_hotspot();
-        else if (idx == 11) k85_run_calculator();
-        else if (idx == 12) { if (k85_run_terminal()) return; }
+        else if (idx == 10) k85_run_air_mouse_ble();
+        else if (idx == 11) k85_run_wifi_hotspot();
+        else if (idx == 12) k85_run_calculator();
+        else if (idx == 13) { if (k85_run_terminal()) return; }
+        else if (idx == 14) k85_run_ir_remote();
     }
 }
+
+
+
+
 

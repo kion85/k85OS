@@ -1,4 +1,4 @@
-#include "system_info.h"
+﻿#include "system_info.h"
 #include "theme.h"
 #include "battery.h"
 #include "power.h"
@@ -19,7 +19,7 @@
 #include <cstdio>
 
 #define K85_FW_NAME "k85OS"
-#define K85_FW_VERSION "v4.1"
+#define K85_FW_VERSION "v4.2"
 
 static temperature_sensor_handle_t s_temp_handle = nullptr;
 static bool s_temp_ready = false;
@@ -38,8 +38,8 @@ static bool get_cpu_temp_c(float *out) {
     return temperature_sensor_get_celsius(s_temp_handle, out) == ESP_OK;
 }
 
-// Аналог run_system_info() из MicroPython (+ добавлена строка Storage: LittleFS,
-// т.к. отдельного Settings-экрана с этой инфой пока нет — появится в слое 6)
+// РђРЅР°Р»РѕРі run_system_info() РёР· MicroPython (+ РґРѕР±Р°РІР»РµРЅР° СЃС‚СЂРѕРєР° Storage: LittleFS,
+// С‚.Рє. РѕС‚РґРµР»СЊРЅРѕРіРѕ Settings-СЌРєСЂР°РЅР° СЃ СЌС‚РѕР№ РёРЅС„РѕР№ РїРѕРєР° РЅРµС‚ вЂ” РїРѕСЏРІРёС‚СЃСЏ РІ СЃР»РѕРµ 6)
 void k85_run_system_info(void) {
     uint32_t bg = k85_get_bg();
     uint32_t fg = k85_get_fg();
@@ -80,7 +80,7 @@ void k85_run_system_info(void) {
         snprintf(line, sizeof(line), "Volume: %d%%", k85_get_sound_volume());
         M5.Display.setCursor(10, y); M5.Display.print(line); y += 12;
 
-        y += 12; // пустая строка, как в оригинале
+        y += 12; // РїСѓСЃС‚Р°СЏ СЃС‚СЂРѕРєР°, РєР°Рє РІ РѕСЂРёРіРёРЅР°Р»Рµ
 
         snprintf(line, sizeof(line), "RAM: %u/%u KB", used_kb, total_kb);
         M5.Display.setCursor(10, y); M5.Display.print(line); y += 12;
@@ -107,7 +107,7 @@ void k85_run_system_info(void) {
         }
         M5.Display.setCursor(10, y); M5.Display.print(line); y += 12;
 
-        // TODO: слой net/wifi заменит на реальный статус подключения
+        // TODO: СЃР»РѕР№ net/wifi Р·Р°РјРµРЅРёС‚ РЅР° СЂРµР°Р»СЊРЅС‹Р№ СЃС‚Р°С‚СѓСЃ РїРѕРґРєР»СЋС‡РµРЅРёСЏ
         M5.Display.setCursor(10, y); M5.Display.print("WiFi: N/A"); y += 12;
 
         snprintf(line, sizeof(line), "NTP: %s", k85_is_ntp_synced() ? "synced" : "no");

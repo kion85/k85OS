@@ -13,7 +13,7 @@
 
 // Если в проекте уже есть макрос/константа версии прошивки (например в device.h) -
 // замени эту строку на неё вместо дублирования.
-#define K85_FW_VERSION "4.1"
+#define K85_FW_VERSION "4.2"
 
 #define K85_BOOT_DURATION_MS 4000
 
@@ -138,4 +138,5 @@ void k85_show_boot_screen(void) {
         default: boot_static_text(title_y); break;
     }
 }
+
 
