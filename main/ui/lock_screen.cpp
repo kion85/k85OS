@@ -1,4 +1,4 @@
-#include "lock_screen.h"
+﻿#include "lock_screen.h"
 #include "theme.h"
 #include "battery.h"
 #include "power.h"
@@ -7,6 +7,8 @@
 #include "rtc_ntp.h"
 #include "device.h"
 #include "step_counter.h"
+#include "text_input.h"
+#include <cstring>
 #include "M5Unified.h"
 #include "esp_timer.h"
 #include "esp_random.h"
@@ -150,6 +152,17 @@ void k85_lock_screen_loop(void) {
         }
         if (k85_ab_held(600)) {
             k85_wait_ab_release();
+            if (g_config.lock_enabled && g_config.lock_password[0]) {
+                char entered[32] = "";
+                bool submitted = k85_text_input("Enter password:", "", entered, sizeof(entered));
+                if (submitted && strcmp(entered, g_config.lock_password) == 0) {
+                    s_particles_init = false;
+                    k85_wake_screen();
+                    return;
+                }
+                // неверный пароль или отмена — остаёмся заблокированы, экран перерисуется на следующей итерации
+                continue;
+            }
             s_particles_init = false;
             k85_wake_screen();
             return;

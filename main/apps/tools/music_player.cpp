@@ -1,10 +1,12 @@
-#include "music_player.h"
+﻿#include "music_player.h"
 #include "common.h"
 #include "theme.h"
 #include "list_menu.h"
 #include "power.h"
 #include "input.h"
 #include "log.h"
+#include "sound.h"
+#include "config.h"
 
 #include "M5Unified.h"
 #include "esp_timer.h"
@@ -111,7 +113,7 @@ static bool browse_for_wav(char *out_path, size_t out_size, const char *root) {
     }
 }
 
-// ---------- Разбор WAV-заголовка (RIFF chunks) ----------
+// ---------- Р Р°Р·Р±РѕСЂ WAV-Р·Р°РіРѕР»РѕРІРєР° (RIFF chunks) ----------
 struct WavInfo {
     uint32_t sample_rate;
     uint16_t channels;
@@ -161,8 +163,8 @@ static bool parse_wav(const uint8_t *data, size_t size, WavInfo &info) {
     return have_fmt && have_data;
 }
 
-// ---------- Экран воспроизведения с иконками управления ----------
-enum PlayerControl { CTRL_BACK10 = 0, CTRL_PLAYPAUSE = 1, CTRL_FWD10 = 2 };
+// ---------- Р­РєСЂР°РЅ РІРѕСЃРїСЂРѕРёР·РІРµРґРµРЅРёСЏ СЃ РёРєРѕРЅРєР°РјРё СѓРїСЂР°РІР»РµРЅРёСЏ ----------
+enum PlayerControl { CTRL_VOL_DOWN = 0, CTRL_BACK10 = 1, CTRL_PLAYPAUSE = 2, CTRL_FWD10 = 3, CTRL_VOL_UP = 4 };
 
 static void draw_player_screen(const char *fname, const WavInfo &wav, size_t position,
                                 bool playing, int selected) {
@@ -194,7 +196,7 @@ static void draw_player_screen(const char *fname, const WavInfo &wav, size_t pos
     M5.Display.setCursor(6, 36);
     M5.Display.print(time_str);
 
-    // Прогресс-бар
+    // РџСЂРѕРіСЂРµСЃСЃ-Р±Р°СЂ
     int bar_x = 6, bar_y = 50, bar_w = w - 12, bar_h = 6;
     M5.Display.drawRect(bar_x, bar_y, bar_w, bar_h, 0x555555);
     float progress = total_sec > 0 ? (float)(cur_sec / total_sec) : 0;
@@ -202,12 +204,12 @@ static void draw_player_screen(const char *fname, const WavInfo &wav, size_t pos
     if (progress > 1) progress = 1;
     M5.Display.fillRect(bar_x + 1, bar_y + 1, (int)((bar_w - 2) * progress), bar_h - 2, accent);
 
-    // Иконки управления: -10 | play/pause | +10
+    // РРєРѕРЅРєРё СѓРїСЂР°РІР»РµРЅРёСЏ: -10 | play/pause | +10
     int icon_y = h / 2 + 20;
     int cx = w / 2;
     int spacing = 50;
 
-    // -10s (двойной левый треугольник)
+    // -10s (РґРІРѕР№РЅРѕР№ Р»РµРІС‹Р№ С‚СЂРµСѓРіРѕР»СЊРЅРёРє)
     int bx = cx - spacing;
     uint32_t col_back = (selected == CTRL_BACK10) ? accent : fg;
     M5.Display.fillTriangle(bx, icon_y, bx + 10, icon_y - 8, bx + 10, icon_y + 8, col_back);
@@ -216,7 +218,7 @@ static void draw_player_screen(const char *fname, const WavInfo &wav, size_t pos
     M5.Display.setCursor(bx - 8, icon_y + 14);
     M5.Display.print("-10s");
 
-    // Play/Pause по центру
+    // Play/Pause РїРѕ С†РµРЅС‚СЂСѓ
     uint32_t col_pp = (selected == CTRL_PLAYPAUSE) ? accent : fg;
     if (playing) {
         M5.Display.fillRect(cx - 8, icon_y - 8, 6, 16, col_pp);
@@ -225,7 +227,7 @@ static void draw_player_screen(const char *fname, const WavInfo &wav, size_t pos
         M5.Display.fillTriangle(cx - 7, icon_y - 9, cx - 7, icon_y + 9, cx + 9, icon_y, col_pp);
     }
 
-    // +10s (двойной правый треугольник)
+    // +10s (РґРІРѕР№РЅРѕР№ РїСЂР°РІС‹Р№ С‚СЂРµСѓРіРѕР»СЊРЅРёРє)
     int fx = cx + spacing - 18;
     uint32_t col_fwd = (selected == CTRL_FWD10) ? accent : fg;
     M5.Display.fillTriangle(fx, icon_y - 8, fx, icon_y + 8, fx + 10, icon_y, col_fwd);
@@ -314,12 +316,22 @@ static void play_wav_file(const char *path) {
         bool need_redraw = false;
 
         if (k85_btn_a_pressed()) {
-            selected = (selected + 1) % 3;
+            selected = (selected + 1) % 5;
             need_redraw = true;
         }
 
         if (k85_btn_b_pressed()) {
-            if (selected == CTRL_PLAYPAUSE) {
+            if (selected == CTRL_VOL_DOWN) {
+                int v = k85_get_sound_volume() - 10;
+                if (v < 0) v = 0;
+                k85_set_sound_volume(v);
+                k85_apply_sound_volume();
+            } else if (selected == CTRL_VOL_UP) {
+                int v = k85_get_sound_volume() + 10;
+                if (v > 100) v = 100;
+                k85_set_sound_volume(v);
+                k85_apply_sound_volume();
+            } else if (selected == CTRL_PLAYPAUSE) {
                 if (playing) {
                     M5.Speaker.stop();
                     playing = false;
@@ -371,7 +383,7 @@ void k85_run_music_player(void) {
                 if (k85_ab_held(500)) { k85_wait_ab_release(); break; }
                 vTaskDelay(pdMS_TO_TICKS(30));
             }
-            continue; // назад к выбору источника, а не полный выход
+            continue; // РЅР°Р·Р°Рґ Рє РІС‹Р±РѕСЂСѓ РёСЃС‚РѕС‡РЅРёРєР°, Р° РЅРµ РїРѕР»РЅС‹Р№ РІС‹С…РѕРґ
         }
         closedir(test);
 
@@ -379,8 +391,9 @@ void k85_run_music_player(void) {
         if (browse_for_wav(chosen_path, sizeof(chosen_path), root)) {
             play_wav_file(chosen_path);
         }
-        // после плеера/отмены браузера — возвращаемся к выбору источника
+        // РїРѕСЃР»Рµ РїР»РµРµСЂР°/РѕС‚РјРµРЅС‹ Р±СЂР°СѓР·РµСЂР° вЂ” РІРѕР·РІСЂР°С‰Р°РµРјСЃСЏ Рє РІС‹Р±РѕСЂСѓ РёСЃС‚РѕС‡РЅРёРєР°
     }
 }
 
 #pragma GCC diagnostic pop
+

@@ -1,4 +1,4 @@
-#include "wifi_hotspot.h"
+﻿#include "wifi_hotspot.h"
 #include "wifi.h"
 #include "common.h"
 #include "power.h"
@@ -27,7 +27,7 @@
 
 static esp_netif_t *s_ap_netif = nullptr;
 
-// ---------- URL decode (%XX и +) ----------
+// ---------- URL decode (%XX Рё +) ----------
 static void url_decode(const char *src, char *dst, size_t dst_size) {
     size_t di = 0;
     while (*src && di + 1 < dst_size) {
@@ -45,7 +45,7 @@ static void url_decode(const char *src, char *dst, size_t dst_size) {
     dst[di] = 0;
 }
 
-// Защита от выхода за пределы /littlefs через "../" в имени.
+// Р—Р°С‰РёС‚Р° РѕС‚ РІС‹С…РѕРґР° Р·Р° РїСЂРµРґРµР»С‹ /littlefs С‡РµСЂРµР· "../" РІ РёРјРµРЅРё.
 static bool sanitize_relpath(const char *name) {
     if (!name[0]) return false;
     if (strstr(name, "..")) return false;
@@ -68,7 +68,7 @@ static void send_http_redirect(int fd, const char *location) {
     send(fd, header, strlen(header), 0);
 }
 
-// ---------- Главная страница: статус + таблица файлов ----------
+// ---------- Р“Р»Р°РІРЅР°СЏ СЃС‚СЂР°РЅРёС†Р°: СЃС‚Р°С‚СѓСЃ + С‚Р°Р±Р»РёС†Р° С„Р°Р№Р»РѕРІ ----------
 static void build_index_page(char *out, size_t out_size, const char *ssid, const char *password) {
     int64_t uptime_s = esp_timer_get_time() / 1000000;
 
@@ -93,6 +93,9 @@ static void build_index_page(char *out, size_t out_size, const char *ssid, const
         "<b>Free heap:</b> %lu bytes"
         "</div>"
         "<p><a href='/upload'>+ Upload file</a></p>"
+        "<form method=GET action=/mkdir style='margin:8px 0'>"
+        "<input type=text name=name placeholder='new folder name'>"
+        "<button type=submit>+ New folder</button></form>"
         "<table><tr><th>Name</th><th>Size</th><th>Actions</th></tr>",
         ssid, password, (long long)uptime_s, (unsigned long)esp_get_free_heap_size());
 
@@ -292,7 +295,7 @@ static bool handle_upload_body(int conn_fd, const char *header,
     return true;
 }
 
-// ---------- Скачивание файла ----------
+// ---------- РЎРєР°С‡РёРІР°РЅРёРµ С„Р°Р№Р»Р° ----------
 static bool handle_download(int conn_fd, const char *name) {
     if (!sanitize_relpath(name)) return false;
     char full_path[192];
@@ -320,7 +323,7 @@ static bool handle_download(int conn_fd, const char *name) {
     return true;
 }
 
-// ---------- Разбор query-параметров вида ?a=b&c=d ----------
+// ---------- Р Р°Р·Р±РѕСЂ query-РїР°СЂР°РјРµС‚СЂРѕРІ РІРёРґР° ?a=b&c=d ----------
 static bool get_query_param(const char *query, const char *key, char *out, size_t out_size) {
     char search[40];
     snprintf(search, sizeof(search), "%s=", key);
@@ -351,7 +354,7 @@ static void handle_connection(int conn_fd, const char *ssid, const char *passwor
     }
     if (headers_end < 0) return;
 
-    // Первая строка: "METHOD /path?query HTTP/1.1"
+    // РџРµСЂРІР°СЏ СЃС‚СЂРѕРєР°: "METHOD /path?query HTTP/1.1"
     char method[8] = {0};
     char path_full[256] = {0};
     sscanf(req_buf, "%7s %255s", method, path_full);
@@ -392,6 +395,16 @@ static void handle_connection(int conn_fd, const char *ssid, const char *passwor
             snprintf(full_path, sizeof(full_path), "%s/%s", K85_UPLOAD_BASE_PATH, name);
             remove(full_path);
             k85_log("web-fm: deleted %s", full_path);
+        }
+        send_http_redirect(conn_fd, "/");
+    } else if (strcmp(path, "/mkdir") == 0) {
+        char name[128] = {0};
+        get_query_param(query, "name", name, sizeof(name));
+        if (sanitize_relpath(name) && name[0]) {
+            char full_path[192];
+            snprintf(full_path, sizeof(full_path), "%s/%s", K85_UPLOAD_BASE_PATH, name);
+            mkdir(full_path, 0755);
+            k85_log("web-fm: mkdir %s", full_path);
         }
         send_http_redirect(conn_fd, "/");
     } else if (strcmp(path, "/rename") == 0) {

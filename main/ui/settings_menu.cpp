@@ -11,6 +11,7 @@
 #include "boot_screen.h"
 #include "../net/ota.h"
 #include "../core/version.h"
+#include "text_input.h"
 
 #include "M5Unified.h"
 #include "freertos/FreeRTOS.h"
@@ -19,13 +20,13 @@
 #include <cstdio>
 #include <cstddef>
 
-#define K85_SETTINGS_ITEM_COUNT 10
+#define K85_SETTINGS_ITEM_COUNT 11
 #define K85_SETTINGS_BACK_IDX   (K85_SETTINGS_ITEM_COUNT - 1)
 
 static const char *k85_settings_labels[K85_SETTINGS_ITEM_COUNT] = {
     "Theme", "Brightness", "Battery mode", "Boot style",
     "Device name", "Sound volume", "WiFi", "Reset steps",
-    "Check for updates", "Back",
+    "Check for updates", "Screen lock", "Back",
 };
 
 static int s_selected = 0;
@@ -60,7 +61,8 @@ static void settings_value_str(char *out, size_t out_size, int idx) {
             break;
         case 7: snprintf(out, out_size, "%d", g_config.step_count); break;
         case 8: snprintf(out, out_size, "v%s", K85_FW_VERSION); break;
-        case 9: out[0] = 0; break; // Back - без значения
+        case 9: snprintf(out, out_size, "%s", g_config.lock_enabled ? "ON" : "OFF"); break;
+        case 10: out[0] = 0; break; // Back - без значения
         default: out[0] = 0;
     }
 }
@@ -228,6 +230,39 @@ static void settings_apply_item(int idx) {
             }
             break;
         }
+        case 9: {
+            if (g_config.lock_enabled) {
+                k85_show_message("Disable screen lock?\nB=confirm A+B=cancel");
+                while (true) {
+                    k85_input_update();
+                    if (k85_ab_held(500)) { k85_wait_ab_release(); goto lock_done; }
+                    if (k85_btn_b_pressed()) break;
+                    vTaskDelay(pdMS_TO_TICKS(30));
+                }
+                g_config.lock_enabled = false;
+                g_config.lock_password[0] = 0;
+                k85_show_message("Screen lock disabled\nA+B=back");
+                while (true) {
+                    k85_input_update();
+                    if (k85_ab_held(500)) { k85_wait_ab_release(); break; }
+                    vTaskDelay(pdMS_TO_TICKS(30));
+                }
+            } else {
+                char pass[32] = "";
+                if (k85_text_input("Set lock password:", "", pass, sizeof(pass)) && pass[0]) {
+                    snprintf(g_config.lock_password, sizeof(g_config.lock_password), "%s", pass);
+                    g_config.lock_enabled = true;
+                    k85_show_message("Screen lock enabled\nA+B=back");
+                    while (true) {
+                        k85_input_update();
+                        if (k85_ab_held(500)) { k85_wait_ab_release(); break; }
+                        vTaskDelay(pdMS_TO_TICKS(30));
+                    }
+                }
+            }
+            lock_done:
+            break;
+        }
         default:
             break;
     }
@@ -264,6 +299,7 @@ void k85_run_settings_menu(void) {
         vTaskDelay(pdMS_TO_TICKS(30));
     }
 }
+
 
 
 

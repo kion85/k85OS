@@ -41,6 +41,8 @@ typedef struct {
     bool ota_locked;   // true = блокирует OTA-обновления по воздуху
     bool wifi_disabled; // true = модуль WiFi выключен пользователем
     bool bt_disabled;   // true = модуль Bluetooth выключен пользователем
+    bool lock_enabled;
+    char lock_password[32];
     k85_high_scores_t high_scores;
 
     // "wifi" (С‚РµРєСѓС‰Р°СЏ СЃРµС‚СЊ)
@@ -73,5 +75,6 @@ bool k85_set_low_score_if_better(const char *game, int value);
 
 int  k85_get_sound_volume(void);
 void k85_set_sound_volume(int v);
+
 
 
