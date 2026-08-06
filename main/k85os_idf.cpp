@@ -54,6 +54,7 @@ extern "C" void app_main(void) {
         return;
     }
     k85_config_load();
+    k85_themes_load_custom();
     k85_log("Config loaded");
 
     k85_rtc_ntp_init();
@@ -122,6 +123,7 @@ extern "C" void app_main(void) {
         vTaskDelay(pdMS_TO_TICKS(30));
     }
 }
+
 
 
 

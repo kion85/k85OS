@@ -3,6 +3,11 @@
 #include "text_input.h"
 #include "list_menu.h"
 #include "log.h"
+#include "input.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "../../core/theme.h"
+#include "../../core/config.h"
 
 #include <dirent.h>
 #include <sys/stat.h>
@@ -11,6 +16,8 @@
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat-truncation"
+
+#define K85_CUSTOM_THEME_MAX_HINT 8
 
 static void browse_dir(const char *root) {
     char lines_buf[16][64];
@@ -143,19 +150,58 @@ static void copy_sd_to_flash(void) {
     k85_show_message(msg);
 }
 
-void k85_run_files(void) {
-    const char *items[] = {"Browse /littlefs", "Browse /sd", "SD Card Info", "Copy SD->Flash", "Back"};
+static void apply_theme_picker(void) {
+    k85_themes_load_custom(); // на случай, если файл только что загрузили
+
+    int total = k85_theme_count();
+    int custom_n = total - K85_THEME_COUNT;
+    if (custom_n <= 0) {
+        k85_show_message("No .thm files\nin /littlefs\nA+B=back");
+        while (true) {
+            k85_input_update();
+            if (k85_ab_held(500)) { k85_wait_ab_release(); break; }
+            vTaskDelay(pdMS_TO_TICKS(30));
+        }
+        return;
+    }
+
+    const char *names[K85_CUSTOM_THEME_MAX_HINT];
+    for (int i = 0; i < custom_n; i++) {
+        names[i] = k85_get_theme_by_index(K85_THEME_COUNT + i)->name;
+    }
+
+    int idx = k85_run_list_menu("APPLY THEME", names, custom_n, nullptr);
+    if (idx < 0) return;
+
+    g_config.theme_idx = K85_THEME_COUNT + idx;
+    k85_config_save();
+
+    char msg[64];
+    snprintf(msg, sizeof(msg), "Applied: %.40s\nA+B=back", names[idx]);
+    k85_show_message(msg);
     while (true) {
-        int idx = k85_run_list_menu("FILES", items, 5, nullptr);
-        if (idx < 0 || idx == 4) return;
+        k85_input_update();
+        if (k85_ab_held(500)) { k85_wait_ab_release(); break; }
+        vTaskDelay(pdMS_TO_TICKS(30));
+    }
+}
+
+void k85_run_files(void) {
+    const char *items[] = {"Browse /littlefs", "Browse /sd", "SD Card Info", "Copy SD->Flash", "Apply theme", "Back"};
+    while (true) {
+        int idx = k85_run_list_menu("FILES", items, 6, nullptr);
+        if (idx < 0 || idx == 5) return;
         if (idx == 0) browse_dir("/littlefs");
         else if (idx == 1) browse_dir("/sd");
         else if (idx == 2) sd_info();
         else if (idx == 3) copy_sd_to_flash();
+        else if (idx == 4) apply_theme_picker();
     }
 }
 
 #pragma GCC diagnostic pop
+
+
 
 
 

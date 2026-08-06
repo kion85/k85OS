@@ -135,7 +135,7 @@ static void settings_draw(void) {
 static void settings_apply_item(int idx) {
     switch (idx) {
         case 0:
-            g_config.theme_idx = (g_config.theme_idx + 1) % K85_THEME_COUNT;
+            g_config.theme_idx = (g_config.theme_idx + 1) % k85_theme_count();
             break;
         case 1:
             g_config.brightness_active += 10;
@@ -299,6 +299,7 @@ void k85_run_settings_menu(void) {
         vTaskDelay(pdMS_TO_TICKS(30));
     }
 }
+
 
 
 

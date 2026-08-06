@@ -1,8 +1,9 @@
-﻿#include "boot_screen.h"
+#include "boot_screen.h"
 #include "config.h"
 #include "theme.h"
 #include "input.h"
 #include "../apps/k85os_menu.h"
+#include "../apps/test_mode.h"
 
 #include "M5Unified.h"
 #include "esp_timer.h"
@@ -13,18 +14,14 @@
 #include <cstring>
 #include <cmath>
 
-// Если в проекте уже есть макрос/константа версии прошивки (например в device.h) -
-// замени эту строку на неё вместо дублирования.
 #define K85_FW_VERSION "4.3"
-
 #define K85_BOOT_DURATION_MS 4000
+#define K85_BOOT_MENU_TIMEOUT_MS 3000
 
 const char *k85_boot_style_names[K85_BOOT_STYLE_COUNT] = {
     "Classic bar", "Spinner circle", "Static text",
 };
 
-// Рисует версию в углу и заголовок "k85OS" по центру, возвращает Y заголовка
-// (нужен, чтобы полоска/спиннер/текст рисовались чуть ниже него).
 static int boot_draw_title(void) {
     int W = M5.Display.width();
     int H = M5.Display.height();
@@ -33,17 +30,15 @@ static int boot_draw_title(void) {
 
     M5.Display.fillScreen(bg);
 
-    // Версия в верхнем левом углу
     M5.Display.setTextSize(1);
     M5.Display.setTextColor(0x888888, bg);
     M5.Display.setCursor(4, 4);
     M5.Display.print("v" K85_FW_VERSION);
 
-    // Заголовок по центру
     M5.Display.setTextSize(3);
     M5.Display.setTextColor(accent, bg);
     const char *text = "k85OS";
-    int approx_w = (int)strlen(text) * 18; // ~ 6px * textSize(3) на символ
+    int approx_w = (int)strlen(text) * 18;
     int x = (W - approx_w) / 2;
     int y = H / 2 - 30;
     M5.Display.setCursor(x, y);
@@ -128,32 +123,88 @@ static void boot_static_text(int title_y) {
     vTaskDelay(pdMS_TO_TICKS(K85_BOOT_DURATION_MS));
 }
 
-static bool check_bios_entry(void) {
-    // Два нажатия A за первые 3 секунды загрузки -> открыть k85os-menu
-    int64_t deadline_us = esp_timer_get_time() + 3000000;
-    int press_count = 0;
-    bool a_was_down = false;
+// ---------- GRUB-style boot menu ----------
+enum BootChoice { BOOT_NORMAL = 0, BOOT_BIOS = 1, BOOT_TEST = 2 };
 
-    while (esp_timer_get_time() < deadline_us) {
-        k85_input_update();
-        bool a_down = k85_btn_a_is_down();
-        if (a_down && !a_was_down) {
-            press_count++;
-            if (press_count >= 2) return true;
-        }
-        a_was_down = a_down;
-        vTaskDelay(pdMS_TO_TICKS(20));
+static void draw_boot_menu(int selected, int seconds_left) {
+    M5.Display.fillScreen(0x000000);
+    M5.Display.setTextSize(2);
+    M5.Display.setTextColor(0xFFFFFF, 0x000000);
+    M5.Display.setCursor(10, 10);
+    M5.Display.print("k85OS Boot Menu");
+
+    static const char *items[] = {"k85OS (normal)", "k85os-menu (BIOS)", "Test Mode"};
+    int y = 50;
+    for (int i = 0; i < 3; i++) {
+        M5.Display.setTextSize(1);
+        M5.Display.setTextColor(i == selected ? 0x00FFFF : 0xFFFFFF, 0x000000);
+        M5.Display.setCursor(10, y);
+        M5.Display.print(i == selected ? "> " : "  ");
+        M5.Display.print(items[i]);
+        y += 16;
     }
-    return false;
+
+    M5.Display.setTextColor(0x777777, 0x000000);
+    M5.Display.setCursor(10, y + 10);
+    if (seconds_left > 0) {
+        M5.Display.printf("Auto-boot in %ds  A=select B=confirm", seconds_left);
+    } else {
+        M5.Display.print("A=select B=confirm");
+    }
+}
+
+// Показывает GRUB-подобное меню на K85_BOOT_MENU_TIMEOUT_MS.
+// Если пользователь ничего не нажал — обычная загрузка. Если нажал A —
+// таймер отменяется, дальше свободная навигация.
+static BootChoice run_boot_menu(void) {
+    int selected = 0;
+    bool interacted = false;
+    int64_t start_us = esp_timer_get_time();
+    int last_seconds_shown = -1;
+
+    while (true) {
+        k85_input_update();
+
+        int64_t elapsed_ms = (esp_timer_get_time() - start_us) / 1000;
+        int seconds_left = interacted ? 0 : (int)((K85_BOOT_MENU_TIMEOUT_MS - elapsed_ms + 999) / 1000);
+        if (seconds_left < 0) seconds_left = 0;
+
+        if (seconds_left != last_seconds_shown) {
+            draw_boot_menu(selected, seconds_left);
+            last_seconds_shown = seconds_left;
+        }
+
+        if (k85_btn_a_pressed()) {
+            interacted = true;
+            selected = (selected + 1) % 3;
+            draw_boot_menu(selected, 0);
+            last_seconds_shown = 0;
+        }
+        if (k85_btn_b_pressed()) {
+            return (BootChoice)selected;
+        }
+
+        if (!interacted && elapsed_ms >= K85_BOOT_MENU_TIMEOUT_MS) {
+            return BOOT_NORMAL;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(30));
+    }
 }
 
 void k85_show_boot_screen(void) {
-    int title_y = boot_draw_title();
+    BootChoice choice = run_boot_menu();
 
-    if (check_bios_entry()) {
+    if (choice == BOOT_BIOS) {
         k85_run_bios_menu();
         return;
     }
+    if (choice == BOOT_TEST) {
+        k85_run_test_mode();
+        return;
+    }
+
+    int title_y = boot_draw_title();
 
     int style = g_config.bootstyle_idx;
     if (style < 0 || style >= K85_BOOT_STYLE_COUNT) style = 0;
@@ -164,7 +215,3 @@ void k85_show_boot_screen(void) {
         default: boot_static_text(title_y); break;
     }
 }
-
-
-
-

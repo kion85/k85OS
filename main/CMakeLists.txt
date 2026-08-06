@@ -41,6 +41,7 @@
          "apps/tools/ir_remote.cpp"
          "apps/clock_menu.cpp"
          "apps/k85os_menu.cpp"
+         "apps/test_mode.cpp"
          "net/ota.cpp"
          "apps/games/snake.cpp"
          "apps/games/tetris.cpp"
@@ -62,6 +63,7 @@ set_source_files_properties(
     "ble_hid/esp_hidd_prf_api.c"
     PROPERTIES COMPILE_OPTIONS "-Wno-unused-const-variable"
 )
+
 
 
 
