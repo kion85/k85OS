@@ -17,6 +17,9 @@
 #include "ui/lock_screen.h"
 #include "ui/quick_settings.h"
 #include "net/ota.h"
+#include "core/post_beep.h"
+#include "net/wifi.h"
+using namespace k85;
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -51,19 +54,37 @@ extern "C" void app_main(void) {
         M5.Display.setTextColor(0xFF0000, 0x000000);
         M5.Display.setCursor(4, 4);
         M5.Display.println("LittleFS FAIL");
+        k85_post_beep(PostCode::LITTLEFS_MOUNT_FAIL);
         return;
     }
     k85_config_load();
+    k85_post_set_enabled(g_config.post_beep_enabled);
+    PostReport post_report;
+    k85_post_report_check(post_report, PostCode::LITTLEFS_MOUNT_FAIL, true);
     k85_themes_load_custom();
     k85_log("Config loaded");
 
     k85_rtc_ntp_init();
+    k85_post_report_check(post_report, PostCode::RTC_TIME_FAIL, k85_rtc_is_present());
+
+    if (!g_config.wifi_disabled) {
+        k85_wifi_init(); // сам факт успешного вызова = пройдено (детального статуса модуль не возвращает)
+    }
+    k85_post_report_check(post_report, PostCode::WIFI_INIT, true);
+
+    // TODO: подставить сюда реальный вызов инициализации BT, когда появится отдельная функция
+    k85_post_report_check(post_report, PostCode::BT_INIT, true);
 
     M5.Display.setRotation(g_config.rotation);
 
     k85_power_init();
     M5.Display.setBrightness(g_config.brightness_active);
     k85_apply_sound_volume();
+
+    int batt = k85_get_battery();
+    bool battery_ok = (batt < 0) || (batt > 20);
+    k85_post_report_check(post_report, PostCode::BATTERY_LOW, battery_ok);
+    k85_post_finish(post_report);
 
     k85_show_boot_screen();
 
@@ -123,6 +144,9 @@ extern "C" void app_main(void) {
         vTaskDelay(pdMS_TO_TICKS(30));
     }
 }
+
+
+
 
 
 

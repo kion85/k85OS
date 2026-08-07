@@ -1,4 +1,4 @@
-﻿#include "clock_menu.h"
+#include "clock_menu.h"
 #include "common.h"
 #include "theme.h"
 #include "battery.h"
@@ -25,7 +25,7 @@ static void wait_ab_exit(void) {
     }
 }
 
-// ---------- Часы (как было в menu.cpp) ----------
+// ---------- Часы ----------
 static void run_clock_face(void) {
     if (!k85_is_ntp_synced()) {
         if (k85_wifi_is_connected()) {
@@ -71,9 +71,27 @@ static void run_clock_face(void) {
     }
 }
 
-// ---------- Общий сигнал (будильник паттерн: низкий-высокий, пауза, повтор) ----------
+// ---------- Громкость сигнала: временный подъём на время будильника/таймера ----------
+static int s_saved_volume = -1;
+
+static void boost_alarm_volume(void) {
+    static const int percents[4] = {40, 60, 80, 100};
+    int i = g_config.alarm_volume_idx;
+    if (i < 0 || i > 3) i = 2;
+    s_saved_volume = g_config.sound_volume;
+    g_config.sound_volume = percents[i];
+    k85_apply_sound_volume();
+}
+
+static void restore_volume(void) {
+    if (s_saved_volume < 0) return;
+    g_config.sound_volume = s_saved_volume;
+    k85_apply_sound_volume();
+    s_saved_volume = -1;
+}
+
+// ---------- Общий сигнал (низкий-высокий, пауза, повтор) ----------
 static bool play_alarm_pattern_step(void) {
-    // низкий тон
     k85_play_tone(300, 250);
     for (int i = 0; i < 5; i++) {
         k85_input_update();
@@ -81,7 +99,6 @@ static bool play_alarm_pattern_step(void) {
         vTaskDelay(pdMS_TO_TICKS(50));
     }
     k85_speaker_stop();
-    // высокий тон
     k85_play_tone(1200, 250);
     for (int i = 0; i < 5; i++) {
         k85_input_update();
@@ -89,7 +106,6 @@ static bool play_alarm_pattern_step(void) {
         vTaskDelay(pdMS_TO_TICKS(50));
     }
     k85_speaker_stop();
-    // пауза
     for (int i = 0; i < 6; i++) {
         k85_input_update();
         if (k85_ab_held(300)) { k85_wait_ab_release(); return true; }
@@ -167,11 +183,12 @@ static void run_timer(void) {
         vTaskDelay(pdMS_TO_TICKS(200));
     }
 
-    // Таймер истёк — сигнал, A+B=стоп, потом B=назад
+    boost_alarm_volume();
     k85_show_message("TIMER DONE!\nA+B=stop");
     while (true) {
         if (play_alarm_pattern_step()) break;
     }
+    restore_volume();
     k85_show_message("Timer finished\nB=back");
     while (true) {
         k85_input_update();
@@ -180,7 +197,7 @@ static void run_timer(void) {
     }
 }
 
-// ---------- Будильник (простой: время срабатывания, ждём совпадения ЧЧ:ММ) ----------
+// ---------- Будильник ----------
 static void run_alarm(void) {
     int h = input_number_field("Alarm: Hours", 7, 23);
     if (h < 0) return;
@@ -205,10 +222,12 @@ static void run_alarm(void) {
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 
+    boost_alarm_volume();
     k85_show_message("ALARM!\nA+B=stop");
     while (true) {
         if (play_alarm_pattern_step()) break;
     }
+    restore_volume();
     k85_show_message("Alarm stopped\nB=back");
     while (true) {
         k85_input_update();
@@ -219,7 +238,7 @@ static void run_alarm(void) {
 
 // ---------- Настройки времени ----------
 static void run_time_settings(void) {
-    static const char *items[] = {"Set time", "Timezone (UTC)", "Back"};
+    static const char *items[] = {"Set time", "Set date", "Timezone (UTC)", "Back"};
     int selected = 0;
     uint32_t bg = k85_get_bg();
 
@@ -232,27 +251,27 @@ static void run_time_settings(void) {
         M5.Display.print("Time settings");
 
         char val[24];
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < 4; i++) {
             bool sel = (i == selected);
             M5.Display.setTextSize(1);
             M5.Display.setTextColor(sel ? k85_get_accent() : k85_get_fg(), bg);
             M5.Display.setCursor(6, 36 + i * 16);
             M5.Display.print(sel ? "> " : "  ");
             M5.Display.print(items[i]);
-            if (i == 1) {
+            if (i == 2) {
                 snprintf(val, sizeof(val), "UTC%+d", g_config.utc_offset);
                 M5.Display.setCursor(140, 36 + i * 16);
                 M5.Display.print(val);
             }
         }
         M5.Display.setTextColor(0xAAAAAA, bg);
-        M5.Display.setCursor(6, 100);
+        M5.Display.setCursor(6, 110);
         M5.Display.print("A=next B=select A+B=back");
 
         if (k85_ab_held(500)) { k85_wait_ab_release(); return; }
-        if (k85_btn_a_pressed()) { selected = (selected + 1) % 3; }
+        if (k85_btn_a_pressed()) { selected = (selected + 1) % 4; }
         if (k85_btn_b_pressed()) {
-            if (selected == 2) return;
+            if (selected == 3) return;
             if (selected == 0) {
                 int h = input_number_field("Set: Hours", 0, 23);
                 if (h < 0) continue;
@@ -262,8 +281,17 @@ static void run_time_settings(void) {
                 k85_show_message("Time set!\nA+B=back");
                 wait_ab_exit();
             } else if (selected == 1) {
+                int day = input_number_field("Set: Day", 1, 31);
+                if (day < 1) continue;
+                int month = input_number_field("Set: Month", 1, 12);
+                if (month < 1) continue;
+                int year_offset = input_number_field("Set: Year (2000+)", 25, 50);
+                if (year_offset < 0) continue;
+                k85_rtc_set_manual_date(day, month, 2000 + year_offset);
+                k85_show_message("Date set!\nA+B=back");
+                wait_ab_exit();
+            } else if (selected == 2) {
                 int off = g_config.utc_offset;
-                // Прокрутка -12..+12 через ввод числа 0..24, смещённое на -12
                 int shifted = input_number_field("UTC offset (0=-12..24=+12)", off + 12, 24);
                 if (shifted < 0) continue;
                 g_config.utc_offset = shifted - 12;

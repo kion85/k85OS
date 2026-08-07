@@ -1,5 +1,6 @@
 ﻿#include "rtc_ntp.h"
 #include "log.h"
+#include "M5Unified.h"
 #include "config.h"
 
 #include "esp_netif_sntp.h"
@@ -39,6 +40,21 @@ void k85_rtc_set_manual_time(int hour, int min, int sec) {
     struct timeval tv = { .tv_sec = new_time, .tv_usec = 0 };
     settimeofday(&tv, nullptr);
     s_ntp_synced = true; // считаем "синхронизированным" — время достоверно
+    s_last_ntp_sync_us = esp_timer_get_time();
+}
+
+void k85_rtc_set_manual_date(int day, int month, int year) {
+    time_t now;
+    time(&now);
+    struct tm timeinfo;
+    localtime_r(&now, &timeinfo);
+    timeinfo.tm_mday = day;
+    timeinfo.tm_mon = month - 1;
+    timeinfo.tm_year = year - 1900;
+    time_t new_time = mktime(&timeinfo);
+    struct timeval tv = { .tv_sec = new_time, .tv_usec = 0 };
+    settimeofday(&tv, nullptr);
+    s_ntp_synced = true;
     s_last_ntp_sync_us = esp_timer_get_time();
 }
 
@@ -106,6 +122,10 @@ const char *k85_get_date_str(void) {
     }
     snprintf(buf, sizeof(buf), "--.--.----");
     return buf;
+}
+
+bool k85_rtc_is_present(void) {
+    return M5.Rtc.isEnabled();
 }
 
 

@@ -5,6 +5,7 @@
 #include "input.h"
 #include "config.h"
 #include "wifi.h"
+#include "../core/post_beep.h"
 
 #include "M5Unified.h"
 #include "esp_heap_caps.h"
@@ -21,13 +22,16 @@
 #include <cstdio>
 #include <cstring>
 
-#define K85_BIOS_ITEM_COUNT 14
+using namespace k85;
+
+#define K85_BIOS_ITEM_COUNT 16
 #define K85_BIOS_VISIBLE_ROWS 6
 
 static const char *k85_bios_labels[K85_BIOS_ITEM_COUNT] = {
     "WiFi module", "Bluetooth module", "OTA lock (secure)",
     "RAM / ROM info", "Chip info", "Uptime",
     "Active OTA slot", "Rollback firmware", "MAC address", "Battery voltage",
+    "POST beep", "POST beep info",
     "Wipe WiFi networks", "Reset config", "Factory reset",
     "Reboot",
 };
@@ -54,6 +58,7 @@ static void bios_value_str(char *out, size_t out_size, int idx) {
             snprintf(out, out_size, "%s", p ? p->label : "?");
             break;
         }
+        case 10: snprintf(out, out_size, "%s", g_config.post_beep_enabled ? "ON" : "OFF"); break;
         default: out[0] = 0;
     }
 }
@@ -147,6 +152,17 @@ static void show_battery_voltage(void) {
         snprintf(msg, sizeof(msg), "Battery: N/A\nA+B=back");
     }
     k85_show_message(msg);
+    wait_ab_exit();
+}
+
+static void show_post_info(void) {
+    k85_show_message(
+        "POST beep codes:\n"
+        "1 low+long: LittleFS fail\n"
+        "2 high: RTC not found\n"
+        "3 mid: battery low\n"
+        "2 asc tones: OK, no errors\n"
+        "A+B=back");
     wait_ab_exit();
 }
 
@@ -256,6 +272,12 @@ static void bios_apply(int idx) {
         case 8: show_mac_address(); break;
         case 9: show_battery_voltage(); break;
         case 10:
+            g_config.post_beep_enabled = !g_config.post_beep_enabled;
+            k85_post_set_enabled(g_config.post_beep_enabled);
+            k85_config_save();
+            break;
+        case 11: show_post_info(); break;
+        case 12:
             if (confirm_action("Wipe WiFi networks")) {
                 g_config.wifi_saved = false;
                 g_config.wifi_ssid[0] = 0;
@@ -266,7 +288,7 @@ static void bios_apply(int idx) {
                 wait_ab_exit();
             }
             break;
-        case 11:
+        case 13:
             if (confirm_action("Reset config to defaults")) {
                 k85_config_defaults(&g_config);
                 k85_config_save();
@@ -274,7 +296,7 @@ static void bios_apply(int idx) {
                 wait_ab_exit();
             }
             break;
-        case 12:
+        case 14:
             if (confirm_action("FACTORY RESET (wipe all data)")) {
                 k85_config_defaults(&g_config);
                 k85_config_save();
@@ -284,7 +306,7 @@ static void bios_apply(int idx) {
                 esp_restart();
             }
             break;
-        case 13:
+        case 15:
             if (confirm_action("Reboot device")) {
                 esp_restart();
             }
