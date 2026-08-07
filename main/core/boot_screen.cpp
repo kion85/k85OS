@@ -1,4 +1,4 @@
-#include "boot_screen.h"
+﻿#include "boot_screen.h"
 #include "config.h"
 #include "theme.h"
 #include "input.h"
@@ -14,7 +14,7 @@
 #include <cstring>
 #include <cmath>
 
-#define K85_FW_VERSION "4.3"
+#define K85_FW_VERSION "4.4"
 #define K85_BOOT_DURATION_MS 4000
 #define K85_BOOT_MENU_TIMEOUT_MS 3000
 
@@ -153,9 +153,9 @@ static void draw_boot_menu(int selected, int seconds_left) {
     }
 }
 
-// Показывает GRUB-подобное меню на K85_BOOT_MENU_TIMEOUT_MS.
-// Если пользователь ничего не нажал — обычная загрузка. Если нажал A —
-// таймер отменяется, дальше свободная навигация.
+// РџРѕРєР°Р·С‹РІР°РµС‚ GRUB-РїРѕРґРѕР±РЅРѕРµ РјРµРЅСЋ РЅР° K85_BOOT_MENU_TIMEOUT_MS.
+// Р•СЃР»Рё РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРёС‡РµРіРѕ РЅРµ РЅР°Р¶Р°Р» вЂ” РѕР±С‹С‡РЅР°СЏ Р·Р°РіСЂСѓР·РєР°. Р•СЃР»Рё РЅР°Р¶Р°Р» A вЂ”
+// С‚Р°Р№РјРµСЂ РѕС‚РјРµРЅСЏРµС‚СЃСЏ, РґР°Р»СЊС€Рµ СЃРІРѕР±РѕРґРЅР°СЏ РЅР°РІРёРіР°С†РёСЏ.
 static BootChoice run_boot_menu(void) {
     int selected = 0;
     bool interacted = false;
