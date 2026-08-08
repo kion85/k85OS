@@ -8,6 +8,7 @@
 #include "device.h"
 #include "step_counter.h"
 #include "text_input.h"
+#include "mbedtls/sha256.h"
 #include <cstring>
 #include "M5Unified.h"
 #include "esp_timer.h"
@@ -155,7 +156,13 @@ void k85_lock_screen_loop(void) {
             if (g_config.lock_enabled && g_config.lock_password[0]) {
                 char entered[32] = "";
                 bool submitted = k85_text_input("Enter password:", "", entered, sizeof(entered));
-                if (submitted && strcmp(entered, g_config.lock_password) == 0) {
+
+                unsigned char hash[32];
+                mbedtls_sha256((const unsigned char *)entered, strlen(entered), hash, 0);
+                char hash_hex[65];
+                for (int i = 0; i < 32; i++) snprintf(hash_hex + i * 2, 3, "%02x", hash[i]);
+
+                if (submitted && strcmp(hash_hex, g_config.lock_password) == 0) {
                     s_particles_init = false;
                     k85_wake_screen();
                     return;
@@ -170,3 +177,4 @@ void k85_lock_screen_loop(void) {
         vTaskDelay(pdMS_TO_TICKS(50));
     }
 }
+

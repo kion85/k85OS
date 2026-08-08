@@ -42,7 +42,7 @@ typedef struct {
     bool wifi_disabled; // true = модуль WiFi выключен пользователем
     bool bt_disabled;   // true = модуль Bluetooth выключен пользователем
     bool lock_enabled;
-    char lock_password[32];
+    char lock_password[65]; // hex SHA-256 хеш пароля
     bool post_beep_enabled;
     int alarm_volume_idx;
     k85_high_scores_t high_scores;
@@ -77,6 +77,7 @@ bool k85_set_low_score_if_better(const char *game, int value);
 
 int  k85_get_sound_volume(void);
 void k85_set_sound_volume(int v);
+
 
 
 

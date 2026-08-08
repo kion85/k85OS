@@ -7,6 +7,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "../../core/theme.h"
+#include "../../core/bios_theme.h"
 #include "../../core/config.h"
 
 #include <dirent.h>
@@ -186,20 +187,83 @@ static void apply_theme_picker(void) {
     }
 }
 
-void k85_run_files(void) {
-    const char *items[] = {"Browse /littlefs", "Browse /sd", "SD Card Info", "Copy SD->Flash", "Apply theme", "Back"};
+static void apply_bios_theme_picker(void) {
+    mkdir("/littlefs/bios", 0755); // на случай, если папки ещё нет
+
+    DIR *d = opendir("/littlefs/bios");
+    if (!d) return;
+
+    char names[16][40];
+    int n = 0;
+    struct dirent *ent;
+    while ((ent = readdir(d)) != nullptr && n < 16) {
+        size_t len = strlen(ent->d_name);
+        if (len > 4 && !strcasecmp(ent->d_name + len - 4, ".thm")) {
+            snprintf(names[n], sizeof(names[n]), "%.35s", ent->d_name);
+            n++;
+        }
+    }
+    closedir(d);
+
+    if (n == 0) {
+        k85_show_message("No bios_*.thm files\nin /littlefs\nA+B=back");
+        while (true) {
+            k85_input_update();
+            if (k85_ab_held(500)) { k85_wait_ab_release(); break; }
+            vTaskDelay(pdMS_TO_TICKS(30));
+        }
+        return;
+    }
+
+    const char *items[17];
+    for (int i = 0; i < n; i++) items[i] = names[i];
+    items[n] = "Back";
+
+    int idx = k85_run_list_menu("APPLY BIOS THEME", items, n + 1, nullptr);
+    if (idx < 0 || idx >= n) return;
+
+    char src[192];
+    snprintf(src, sizeof(src), "/littlefs/bios/%s", names[idx]);
+
+    FILE *fsrc = fopen(src, "rb");
+    FILE *fdst = fopen(K85_BIOS_THEME_ACTIVE_FILE, "wb");
+    if (fsrc && fdst) {
+        char buf[256];
+        size_t r;
+        while ((r = fread(buf, 1, sizeof(buf), fsrc)) > 0) fwrite(buf, 1, r, fdst);
+    }
+    if (fsrc) fclose(fsrc);
+    if (fdst) fclose(fdst);
+
+    char msg[64];
+    snprintf(msg, sizeof(msg), "BIOS theme applied:\n%.35s\nA+B=back", names[idx]);
+    k85_show_message(msg);
     while (true) {
-        int idx = k85_run_list_menu("FILES", items, 6, nullptr);
-        if (idx < 0 || idx == 5) return;
+        k85_input_update();
+        if (k85_ab_held(500)) { k85_wait_ab_release(); break; }
+        vTaskDelay(pdMS_TO_TICKS(30));
+    }
+}
+
+void k85_run_files(void) {
+    const char *items[] = {"Browse /littlefs", "Browse /sd", "SD Card Info", "Copy SD->Flash", "Apply theme", "Apply BIOS theme", "Back"};
+    while (true) {
+        int idx = k85_run_list_menu("FILES", items, 7, nullptr);
+        if (idx < 0 || idx == 6) return;
         if (idx == 0) browse_dir("/littlefs");
         else if (idx == 1) browse_dir("/sd");
         else if (idx == 2) sd_info();
         else if (idx == 3) copy_sd_to_flash();
         else if (idx == 4) apply_theme_picker();
+        else if (idx == 5) apply_bios_theme_picker();
     }
 }
 
 #pragma GCC diagnostic pop
+
+
+
+
 
 
 

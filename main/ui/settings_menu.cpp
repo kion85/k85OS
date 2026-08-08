@@ -12,6 +12,7 @@
 #include "../net/ota.h"
 #include "../core/version.h"
 #include "text_input.h"
+#include "mbedtls/sha256.h"
 
 #include "M5Unified.h"
 #include "freertos/FreeRTOS.h"
@@ -250,7 +251,11 @@ static void settings_apply_item(int idx) {
             } else {
                 char pass[32] = "";
                 if (k85_text_input("Set lock password:", "", pass, sizeof(pass)) && pass[0]) {
-                    snprintf(g_config.lock_password, sizeof(g_config.lock_password), "%s", pass);
+                    unsigned char hash[32];
+                    mbedtls_sha256((const unsigned char *)pass, strlen(pass), hash, 0);
+                    for (int i = 0; i < 32; i++) {
+                        snprintf(g_config.lock_password + i * 2, 3, "%02x", hash[i]);
+                    }
                     g_config.lock_enabled = true;
                     k85_show_message("Screen lock enabled\nA+B=back");
                     while (true) {
@@ -299,6 +304,7 @@ void k85_run_settings_menu(void) {
         vTaskDelay(pdMS_TO_TICKS(30));
     }
 }
+
 
 
 

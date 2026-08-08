@@ -1,4 +1,4 @@
-#include "k85os_menu.h"
+﻿#include "k85os_menu.h"
 #include "common.h"
 #include "theme.h"
 #include "battery.h"
@@ -6,6 +6,7 @@
 #include "config.h"
 #include "wifi.h"
 #include "../core/post_beep.h"
+#include "../core/bios_theme.h"
 
 #include "M5Unified.h"
 #include "esp_heap_caps.h"
@@ -28,7 +29,7 @@ using namespace k85;
 #define K85_BIOS_VISIBLE_ROWS 6
 
 static const char *k85_bios_labels[K85_BIOS_ITEM_COUNT] = {
-    "WiFi module", "Bluetooth module", "OTA lock (secure)",
+    "WiFi module", "Bluetooth module", "OTA lock (soft)",
     "RAM / ROM info", "Chip info", "Uptime",
     "Active OTA slot", "Rollback firmware", "MAC address", "Battery voltage",
     "POST beep", "POST beep info",
@@ -210,11 +211,13 @@ static void run_rollback(void) {
     esp_restart();
 }
 
+static K85BiosTheme s_bios_theme;
+
 static void bios_draw(void) {
     bios_clamp_scroll();
-    uint32_t bg = 0x000000;
-    uint32_t fg = 0xFFFFFF;
-    uint32_t accent = k85_get_accent();
+    uint32_t bg = s_bios_theme.bg;
+    uint32_t fg = s_bios_theme.fg;
+    uint32_t accent = s_bios_theme.accent;
 
     M5.Display.fillScreen(bg);
     M5.Display.setTextSize(1);
@@ -227,16 +230,23 @@ static void bios_draw(void) {
     int last_visible = s_scroll_top + K85_BIOS_VISIBLE_ROWS;
     if (last_visible > K85_BIOS_ITEM_COUNT) last_visible = K85_BIOS_ITEM_COUNT;
 
+    int w = M5.Display.width();
     for (int i = s_scroll_top; i < last_visible; i++) {
         bool sel = (i == s_selected);
+
+        if (sel) {
+            M5.Display.fillRect(2, y - 2, w - 4, 13, accent);
+        }
+
         M5.Display.setCursor(6, y);
-        M5.Display.setTextColor(sel ? accent : fg, bg);
+        M5.Display.setTextColor(sel ? bg : fg, sel ? accent : bg);
         M5.Display.print(sel ? "> " : "  ");
         M5.Display.print(k85_bios_labels[i]);
 
         bios_value_str(val, sizeof(val), i);
         if (val[0]) {
             M5.Display.setCursor(150, y);
+            M5.Display.setTextColor(sel ? bg : fg, sel ? accent : bg);
             M5.Display.print(val);
         }
         y += 14;
@@ -319,6 +329,7 @@ static void bios_apply(int idx) {
 void k85_run_bios_menu(void) {
     s_selected = 0;
     s_scroll_top = 0;
+    s_bios_theme = k85_bios_theme_load();
     bios_draw();
 
     while (true) {
@@ -339,3 +350,5 @@ void k85_run_bios_menu(void) {
         vTaskDelay(pdMS_TO_TICKS(30));
     }
 }
+
+

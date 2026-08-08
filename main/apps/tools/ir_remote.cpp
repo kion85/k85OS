@@ -66,6 +66,7 @@ static const K85IrBrandCode K85_IR_BRAND_DB[] = {
     {"Generic TV (NEC #2)", IR_PROTO_NEC,       0x0008, 0x0005},
     {"Generic TV (NECext A)", IR_PROTO_NECEXT,  0xDF00, 0x001C},
     {"Generic TV (NECext B)", IR_PROTO_NECEXT,  0x1818, 0x3FC0},
+    {"Generic TV (NEC #3)",   IR_PROTO_NEC,     0x0008, 0x0017},
 };
 #define K85_IR_BRAND_COUNT (int)(sizeof(K85_IR_BRAND_DB) / sizeof(K85_IR_BRAND_DB[0]))
 
@@ -188,6 +189,16 @@ static void encode_sirc(uint16_t address, uint16_t command, rmt_symbol_word_t *s
     *symbol_count = idx;
 }
 
+static const char *protocol_name(K85IrProtocol p) {
+    switch (p) {
+        case IR_PROTO_NEC: return "NEC";
+        case IR_PROTO_SAMSUNG32: return "Samsung32";
+        case IR_PROTO_SIRC: return "SIRC";
+        case IR_PROTO_NECEXT: return "NECext";
+    }
+    return "?";
+}
+
 static bool transmit_symbols(rmt_symbol_word_t *symbols, size_t symbol_count) {
     rmt_transmit_config_t tx_cfg = {};
     tx_cfg.loop_count = 0;
@@ -306,7 +317,10 @@ static void run_ir_send(void) {
     int idx = k85_run_list_menu("SEND IR", names, n, nullptr);
     if (idx < 0) return;
     bool ok = send_nec(codes[idx].address, codes[idx].command);
-    k85_show_message(ok ? "Sent!\nA+B=back" : "Send failed\nA+B=back");
+    char msg[80];
+    snprintf(msg, sizeof(msg), "NEC A:%04X C:%02X\n%s\nA+B=back",
+             codes[idx].address, codes[idx].command, ok ? "Sent" : "Send failed");
+    k85_show_message(msg);
     wait_ab_exit();
 }
 
@@ -321,7 +335,12 @@ static void run_ir_brand_codes(void) {
         if (idx < 0 || idx == K85_IR_BRAND_COUNT) return;
 
         bool ok = send_ir_brand_code(K85_IR_BRAND_DB[idx]);
-        k85_show_message(ok ? "Sent!\nA+B=back" : "Send failed\nA+B=back");
+        char msg[100];
+        snprintf(msg, sizeof(msg), "%s\nA:%04X C:%04X\n%s\nA+B=back",
+                 protocol_name(K85_IR_BRAND_DB[idx].protocol),
+                 K85_IR_BRAND_DB[idx].address, K85_IR_BRAND_DB[idx].command,
+                 ok ? "Sent" : "Send failed");
+        k85_show_message(msg);
         wait_ab_exit();
     }
 }
@@ -333,8 +352,11 @@ static void run_ir_blast_all(void) {
         k85_input_update();
         if (k85_ab_held(300)) { k85_wait_ab_release(); return; }
 
-        char msg[64];
-        snprintf(msg, sizeof(msg), "Blasting %d/%d\n%.30s\nA+B=stop", i + 1, K85_IR_BRAND_COUNT, K85_IR_BRAND_DB[i].name);
+        char msg[120];
+        snprintf(msg, sizeof(msg), "Blasting %d/%d\n%.30s\n%s A:%04X C:%04X\nA+B=stop",
+                 i + 1, K85_IR_BRAND_COUNT, K85_IR_BRAND_DB[i].name,
+                 protocol_name(K85_IR_BRAND_DB[i].protocol),
+                 K85_IR_BRAND_DB[i].address, K85_IR_BRAND_DB[i].command);
         k85_show_message(msg);
 
         send_ir_brand_code(K85_IR_BRAND_DB[i]);
@@ -441,3 +463,5 @@ void k85_run_ir_remote(void) {
     M5.Speaker.begin();
     k85_apply_sound_volume();
 }
+
+
