@@ -2,6 +2,7 @@
 #include "common.h"
 #include "theme.h"
 #include "battery.h"
+#include "sound.h"
 #include "input.h"
 #include "config.h"
 #include "wifi.h"
@@ -25,14 +26,14 @@
 
 using namespace k85;
 
-#define K85_BIOS_ITEM_COUNT 16
+#define K85_BIOS_ITEM_COUNT 17
 #define K85_BIOS_VISIBLE_ROWS 6
 
 static const char *k85_bios_labels[K85_BIOS_ITEM_COUNT] = {
     "WiFi module", "Bluetooth module", "OTA lock (soft)",
     "RAM / ROM info", "Chip info", "Uptime",
     "Active OTA slot", "Rollback firmware", "MAC address", "Battery voltage",
-    "POST beep", "POST beep info",
+    "POST beep", "POST beep info", "Mute all sound",
     "Wipe WiFi networks", "Reset config", "Factory reset",
     "Reboot",
 };
@@ -60,6 +61,7 @@ static void bios_value_str(char *out, size_t out_size, int idx) {
             break;
         }
         case 10: snprintf(out, out_size, "%s", g_config.post_beep_enabled ? "ON" : "OFF"); break;
+        case 12: snprintf(out, out_size, "%s", g_config.sound_muted ? "MUTED" : "unmuted"); break;
         default: out[0] = 0;
     }
 }
@@ -288,6 +290,11 @@ static void bios_apply(int idx) {
             break;
         case 11: show_post_info(); break;
         case 12:
+            g_config.sound_muted = !g_config.sound_muted;
+            k85_apply_sound_volume();
+            k85_config_save();
+            break;
+        case 13:
             if (confirm_action("Wipe WiFi networks")) {
                 g_config.wifi_saved = false;
                 g_config.wifi_ssid[0] = 0;
@@ -298,7 +305,7 @@ static void bios_apply(int idx) {
                 wait_ab_exit();
             }
             break;
-        case 13:
+        case 14:
             if (confirm_action("Reset config to defaults")) {
                 k85_config_defaults(&g_config);
                 k85_config_save();
@@ -306,7 +313,7 @@ static void bios_apply(int idx) {
                 wait_ab_exit();
             }
             break;
-        case 14:
+        case 15:
             if (confirm_action("FACTORY RESET (wipe all data)")) {
                 k85_config_defaults(&g_config);
                 k85_config_save();
@@ -316,7 +323,7 @@ static void bios_apply(int idx) {
                 esp_restart();
             }
             break;
-        case 15:
+        case 16:
             if (confirm_action("Reboot device")) {
                 esp_restart();
             }
@@ -350,5 +357,6 @@ void k85_run_bios_menu(void) {
         vTaskDelay(pdMS_TO_TICKS(30));
     }
 }
+
 
 

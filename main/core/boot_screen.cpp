@@ -1,6 +1,7 @@
-﻿#include "boot_screen.h"
+#include "boot_screen.h"
 #include "config.h"
 #include "theme.h"
+#include "boot_theme.h"
 #include "input.h"
 #include "../apps/k85os_menu.h"
 #include "../apps/test_mode.h"
@@ -22,11 +23,13 @@ const char *k85_boot_style_names[K85_BOOT_STYLE_COUNT] = {
     "Classic bar", "Spinner circle", "Static text",
 };
 
+static K85BootTheme s_boot_theme;
+
 static int boot_draw_title(void) {
     int W = M5.Display.width();
     int H = M5.Display.height();
-    uint32_t bg = k85_get_bg();
-    uint32_t accent = k85_get_accent();
+    uint32_t bg = s_boot_theme.bg;
+    uint32_t accent = s_boot_theme.accent;
 
     M5.Display.fillScreen(bg);
 
@@ -49,7 +52,7 @@ static int boot_draw_title(void) {
 
 static void boot_classic_bar(int title_y) {
     int W = M5.Display.width();
-    uint32_t accent = k85_get_accent();
+    uint32_t accent = s_boot_theme.accent;
 
     int bar_w = 140;
     int bar_h = 6;
@@ -79,8 +82,8 @@ static void boot_classic_bar(int title_y) {
 
 static void boot_spinner(int title_y) {
     int W = M5.Display.width();
-    uint32_t bg = k85_get_bg();
-    uint32_t accent = k85_get_accent();
+    uint32_t bg = s_boot_theme.bg;
+    uint32_t accent = s_boot_theme.accent;
 
     int cx = W / 2;
     int cy = title_y + 55;
@@ -110,7 +113,7 @@ static void boot_static_text(int title_y) {
     (void)title_y;
     int W = M5.Display.width();
     int H = M5.Display.height();
-    uint32_t bg = k85_get_bg();
+    uint32_t bg = s_boot_theme.bg;
 
     M5.Display.setTextSize(1);
     M5.Display.setTextColor(0x888888, bg);
@@ -127,24 +130,33 @@ static void boot_static_text(int title_y) {
 enum BootChoice { BOOT_NORMAL = 0, BOOT_BIOS = 1, BOOT_TEST = 2 };
 
 static void draw_boot_menu(int selected, int seconds_left) {
-    M5.Display.fillScreen(0x000000);
+    uint32_t bg = s_boot_theme.bg;
+    uint32_t fg = s_boot_theme.fg;
+    uint32_t accent = s_boot_theme.accent;
+
+    M5.Display.fillScreen(bg);
     M5.Display.setTextSize(2);
-    M5.Display.setTextColor(0xFFFFFF, 0x000000);
+    M5.Display.setTextColor(fg, bg);
     M5.Display.setCursor(10, 10);
     M5.Display.print("k85OS Boot Menu");
 
     static const char *items[] = {"k85OS (normal)", "k85os-menu (BIOS)", "Test Mode"};
     int y = 50;
+    int w = M5.Display.width();
     for (int i = 0; i < 3; i++) {
+        bool sel = (i == selected);
+        if (sel) {
+            M5.Display.fillRect(2, y - 2, w - 4, 13, accent);
+        }
         M5.Display.setTextSize(1);
-        M5.Display.setTextColor(i == selected ? 0x00FFFF : 0xFFFFFF, 0x000000);
+        M5.Display.setTextColor(sel ? bg : fg, sel ? accent : bg);
         M5.Display.setCursor(10, y);
-        M5.Display.print(i == selected ? "> " : "  ");
+        M5.Display.print(sel ? "> " : "  ");
         M5.Display.print(items[i]);
         y += 16;
     }
 
-    M5.Display.setTextColor(0x777777, 0x000000);
+    M5.Display.setTextColor(0x777777, bg);
     M5.Display.setCursor(10, y + 10);
     if (seconds_left > 0) {
         M5.Display.printf("Auto-boot in %ds  A=select B=confirm", seconds_left);
@@ -153,9 +165,9 @@ static void draw_boot_menu(int selected, int seconds_left) {
     }
 }
 
-// РџРѕРєР°Р·С‹РІР°РµС‚ GRUB-РїРѕРґРѕР±РЅРѕРµ РјРµРЅСЋ РЅР° K85_BOOT_MENU_TIMEOUT_MS.
-// Р•СЃР»Рё РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРёС‡РµРіРѕ РЅРµ РЅР°Р¶Р°Р» вЂ” РѕР±С‹С‡РЅР°СЏ Р·Р°РіСЂСѓР·РєР°. Р•СЃР»Рё РЅР°Р¶Р°Р» A вЂ”
-// С‚Р°Р№РјРµСЂ РѕС‚РјРµРЅСЏРµС‚СЃСЏ, РґР°Р»СЊС€Рµ СЃРІРѕР±РѕРґРЅР°СЏ РЅР°РІРёРіР°С†РёСЏ.
+// Показывает GRUB-подобное меню на K85_BOOT_MENU_TIMEOUT_MS.
+// Если пользователь ничего не нажал — обычная загрузка. Если нажал A —
+// таймер отменяется, дальше свободная навигация.
 static BootChoice run_boot_menu(void) {
     int selected = 0;
     bool interacted = false;
@@ -193,6 +205,8 @@ static BootChoice run_boot_menu(void) {
 }
 
 void k85_show_boot_screen(void) {
+    s_boot_theme = k85_boot_theme_load();
+
     BootChoice choice = run_boot_menu();
 
     if (choice == BOOT_BIOS) {

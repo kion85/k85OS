@@ -59,6 +59,7 @@ void k85_config_defaults(k85_config_t *cfg) {
     cfg->lock_password[0] = 0;
     cfg->post_beep_enabled = true;
     cfg->alarm_volume_idx = 2; // High по умолчанию
+    cfg->sound_muted = false;
     cfg->wifi_saved       = false;
     cfg->wifi_networks_count = 0;
     // high_scores, step_count, step_record, step_date вЂ” СѓР¶Рµ 0/""
@@ -89,6 +90,7 @@ static cJSON *cfg_to_json(const k85_config_t *c) {
     cJSON_AddStringToObject(root, "lock_password", c->lock_password);
     cJSON_AddBoolToObject(root, "post_beep_enabled", c->post_beep_enabled);
     cJSON_AddNumberToObject(root, "alarm_volume_idx", c->alarm_volume_idx);
+    cJSON_AddBoolToObject(root, "sound_muted", c->sound_muted);
 
     cJSON *hs = cJSON_CreateObject();
     cJSON_AddNumberToObject(hs, "2048",    c->high_scores.game_2048);
@@ -143,6 +145,7 @@ static void cfg_from_json(cJSON *root, k85_config_t *out) {
     { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "lock_password"); if (_x && cJSON_IsString(_x)) set_str(out->lock_password, sizeof(out->lock_password), _x->valuestring); }
     { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "post_beep_enabled"); if (_x) out->post_beep_enabled = cJSON_IsTrue(_x); }
     { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "alarm_volume_idx"); if (_x && cJSON_IsNumber(_x)) out->alarm_volume_idx = _x->valueint; }
+    { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "sound_muted"); if (_x) out->sound_muted = cJSON_IsTrue(_x); }
 #undef GET_INT
 
     cJSON *hs = cJSON_GetObjectItemCaseSensitive(root, "high_scores");
@@ -319,6 +322,7 @@ void k85_set_sound_volume(int v) {
     g_config.sound_volume = v;
     k85_config_save();
 }
+
 
 
 

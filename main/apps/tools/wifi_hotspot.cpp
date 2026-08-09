@@ -680,6 +680,9 @@ void k85_run_wifi_hotspot(void) {
             socklen_t client_len = sizeof(client_addr);
             int conn_fd = accept(listen_fd, (struct sockaddr *)&client_addr, &client_len);
             if (conn_fd >= 0) {
+                struct timeval sock_timeout = { .tv_sec = 3, .tv_usec = 0 };
+                setsockopt(conn_fd, SOL_SOCKET, SO_RCVTIMEO, &sock_timeout, sizeof(sock_timeout));
+                setsockopt(conn_fd, SOL_SOCKET, SO_SNDTIMEO, &sock_timeout, sizeof(sock_timeout));
                 handle_connection(conn_fd, ssid);
                 close(conn_fd);
             }
@@ -694,5 +697,6 @@ void k85_run_wifi_hotspot(void) {
 }
 
 #pragma GCC diagnostic pop
+
 
 
