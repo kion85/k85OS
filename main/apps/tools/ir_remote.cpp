@@ -36,6 +36,8 @@
 #define SIRC_BIT_0_MARK 600
 #define SIRC_BIT_1_MARK 1200
 
+#define RC5_HALF_BIT 889
+
 #define K85_IR_MAX_CODES 16
 #define K85_IR_FILE "/flash/k85_ir_codes.txt"
 
@@ -47,7 +49,7 @@ struct K85IrCode {
 
 // ---------- Р‘СЂРµРЅРґРѕРІР°СЏ Р±Р°Р·Р° (РїСЂРѕРІРµСЂРµРЅРЅС‹Рµ РєРѕРґС‹, best-effort вЂ” РєР°Рє Сѓ Р»СЋР±РѕРіРѕ
 // СѓРЅРёРІРµСЂСЃР°Р»СЊРЅРѕРіРѕ РїСѓР»СЊС‚Р°, РјРѕР¶РµС‚ РЅРµ РїРѕРґРѕР№С‚Рё Рє РєРѕРЅРєСЂРµС‚РЅРѕР№ РјРѕРґРµР»Рё) ----------
-enum K85IrProtocol { IR_PROTO_NEC, IR_PROTO_SAMSUNG32, IR_PROTO_SIRC, IR_PROTO_NECEXT };
+enum K85IrProtocol { IR_PROTO_NEC, IR_PROTO_SAMSUNG32, IR_PROTO_SIRC, IR_PROTO_NECEXT, IR_PROTO_RC5 };
 
 struct K85IrBrandCode {
     const char *name;
@@ -67,6 +69,7 @@ static const K85IrBrandCode K85_IR_BRAND_DB[] = {
     {"Generic TV (NECext A)", IR_PROTO_NECEXT,  0xDF00, 0x001C},
     {"Generic TV (NECext B)", IR_PROTO_NECEXT,  0x1818, 0x3FC0},
     {"Generic TV (NEC #3)",   IR_PROTO_NEC,     0x0008, 0x0017},
+    {"Philips (RC5)",         IR_PROTO_RC5,     0x0000, 0x000C},
 };
 #define K85_IR_BRAND_COUNT (int)(sizeof(K85_IR_BRAND_DB) / sizeof(K85_IR_BRAND_DB[0]))
 
@@ -195,8 +198,35 @@ static const char *protocol_name(K85IrProtocol p) {
         case IR_PROTO_SAMSUNG32: return "Samsung32";
         case IR_PROTO_SIRC: return "SIRC";
         case IR_PROTO_NECEXT: return "NECext";
+        case IR_PROTO_RC5: return "RC5";
     }
     return "?";
+}
+
+// RC5 (Philips): Manchester-кодирование, 14 бит = 2 старт-бита(1,1) + toggle(0) + 5 бит адрес + 6 бит команда.
+// Бит 0 = mark(889)+space(889), бит 1 = space(889)+mark(889) (по спецификации SB-Projects).
+static void encode_rc5(uint16_t address, uint16_t command, rmt_symbol_word_t *symbols, size_t *symbol_count) {
+    bool bits[14];
+    bits[0] = true;  // start bit 1
+    bits[1] = true;  // start bit 2
+    bits[2] = false; // toggle (фиксированный, для одиночной посылки достаточно)
+    for (int i = 0; i < 5; i++) bits[3 + i] = (address & (1 << (4 - i))) != 0;
+    for (int i = 0; i < 6; i++) bits[8 + i] = (command & (1 << (5 - i))) != 0;
+
+    size_t idx = 0;
+    for (int i = 0; i < 14; i++) {
+        if (bits[i]) {
+            // логическая 1: space затем mark
+            symbols[idx].duration0 = RC5_HALF_BIT; symbols[idx].level0 = 0;
+            symbols[idx].duration1 = RC5_HALF_BIT; symbols[idx].level1 = 1;
+        } else {
+            // логический 0: mark затем space
+            symbols[idx].duration0 = RC5_HALF_BIT; symbols[idx].level0 = 1;
+            symbols[idx].duration1 = RC5_HALF_BIT; symbols[idx].level1 = 0;
+        }
+        idx++;
+    }
+    *symbol_count = idx;
 }
 
 static bool transmit_symbols(rmt_symbol_word_t *symbols, size_t symbol_count) {
@@ -238,6 +268,10 @@ static bool send_ir_brand_code(const K85IrBrandCode &code) {
         case IR_PROTO_NECEXT: {
             uint32_t raw = samsung32_raw(code.address, code.command); // тот же принцип: прямой 32-битный кадр без инверсии
             encode_nec_family(raw, symbols, &symbol_count);
+            break;
+        }
+        case IR_PROTO_RC5: {
+            encode_rc5(code.address, code.command, symbols, &symbol_count);
             break;
         }
     }
@@ -463,5 +497,6 @@ void k85_run_ir_remote(void) {
     M5.Speaker.begin();
     k85_apply_sound_volume();
 }
+
 
 

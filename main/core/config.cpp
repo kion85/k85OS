@@ -7,6 +7,9 @@
 #include "esp_log.h"
 #include "esp_littlefs.h"
 #include "cJSON.h"
+#include "mbedtls/aes.h"
+#include "mbedtls/sha256.h"
+#include "esp_wifi.h"
 
 static const char *TAG = "k85_cfg";
 
@@ -60,12 +63,106 @@ void k85_config_defaults(k85_config_t *cfg) {
     cfg->post_beep_enabled = true;
     cfg->alarm_volume_idx = 2; // High по умолчанию
     cfg->sound_muted = false;
+    cfg->sb_flags = 0x3; // по умолчанию: battery% + time
+    cfg->sb_bg_color = 0xFFFFFFFF;
+    cfg->ap_channel = 1;
+    cfg->ap_open = false;
     cfg->wifi_saved       = false;
     cfg->wifi_networks_count = 0;
     // high_scores, step_count, step_record, step_date вЂ” СѓР¶Рµ 0/""
 }
 
 // ============================ JSON <-> struct ============================
+
+// ============================ Шифрование паролей WiFi на диске ============================
+// Ключ выводится из MAC-адреса устройства (SHA-256), пароли хранятся в JSON
+// зашифрованными (AES-128-CBC), в рантайме g_config всегда содержит plaintext
+// (нужен для esp_wifi_connect). Честно: ключ вычисляется тем же алгоритмом,
+// что известен из исходников прошивки — это защита от простого чтения JSON
+// "как есть", а не от продвинутого реверс-инжиниринга дампа флеша целиком.
+static void get_aes_key(unsigned char key_out[16]) {
+    uint8_t mac[6];
+    esp_wifi_get_mac(WIFI_IF_STA, mac);
+    unsigned char hash[32];
+    char salt[] = "k85os-wifi-store-v1";
+    unsigned char input[6 + sizeof(salt)];
+    memcpy(input, mac, 6);
+    memcpy(input + 6, salt, sizeof(salt));
+    mbedtls_sha256(input, sizeof(input), hash, 0);
+    memcpy(key_out, hash, 16);
+}
+
+static void bytes_to_hex(const unsigned char *data, size_t len, char *out) {
+    for (size_t i = 0; i < len; i++) snprintf(out + i * 2, 3, "%02x", data[i]);
+}
+
+static bool hex_to_bytes(const char *hex, unsigned char *out, size_t out_max, size_t *out_len) {
+    size_t hlen = strlen(hex);
+    if (hlen % 2 != 0 || hlen / 2 > out_max) return false;
+    for (size_t i = 0; i < hlen / 2; i++) {
+        char byte_str[3] = { hex[i * 2], hex[i * 2 + 1], 0 };
+        out[i] = (unsigned char)strtoul(byte_str, nullptr, 16);
+    }
+    *out_len = hlen / 2;
+    return true;
+}
+
+// Шифрует plaintext (до 64 байт) -> hex-строка в out (нужно >= 192 байт)
+static void encrypt_to_hex(const char *plaintext, char *out, size_t out_size) {
+    if (!plaintext[0]) { out[0] = 0; return; }
+
+    unsigned char key[16];
+    get_aes_key(key);
+
+    unsigned char buf[80] = {0};
+    size_t plen = strlen(plaintext);
+    if (plen > 64) plen = 64;
+    memcpy(buf, plaintext, plen);
+
+    // PKCS7-подобное дополнение до кратного 16
+    size_t padded_len = ((plen / 16) + 1) * 16;
+    unsigned char pad_val = (unsigned char)(padded_len - plen);
+    for (size_t i = plen; i < padded_len; i++) buf[i] = pad_val;
+
+    unsigned char iv[16] = {0}; // фиксированный IV: приемлемо для коротких независимых строк на одном устройстве
+    mbedtls_aes_context aes;
+    mbedtls_aes_init(&aes);
+    mbedtls_aes_setkey_enc(&aes, key, 128);
+    unsigned char cipher[80];
+    mbedtls_aes_crypt_cbc(&aes, MBEDTLS_AES_ENCRYPT, padded_len, iv, buf, cipher);
+    mbedtls_aes_free(&aes);
+
+    bytes_to_hex(cipher, padded_len, out);
+    out[padded_len * 2] = 0;
+}
+
+// Дешифрует hex-строку обратно в plaintext
+static void decrypt_from_hex(const char *hex, char *out, size_t out_size) {
+    out[0] = 0;
+    if (!hex || !hex[0]) return;
+
+    unsigned char cipher[80];
+    size_t clen = 0;
+    if (!hex_to_bytes(hex, cipher, sizeof(cipher), &clen)) return;
+    if (clen == 0 || clen % 16 != 0) return;
+
+    unsigned char key[16];
+    get_aes_key(key);
+    unsigned char iv[16] = {0};
+
+    mbedtls_aes_context aes;
+    mbedtls_aes_init(&aes);
+    mbedtls_aes_setkey_dec(&aes, key, 128);
+    unsigned char plain[80];
+    mbedtls_aes_crypt_cbc(&aes, MBEDTLS_AES_DECRYPT, clen, iv, cipher, plain);
+    mbedtls_aes_free(&aes);
+
+    unsigned char pad_val = plain[clen - 1];
+    size_t plain_len = (pad_val <= 16 && pad_val <= clen) ? clen - pad_val : clen;
+    if (plain_len >= out_size) plain_len = out_size - 1;
+    memcpy(out, plain, plain_len);
+    out[plain_len] = 0;
+}
 static void set_str(char *dst, size_t dst_sz, const char *src) {
     if (src) snprintf(dst, dst_sz, "%s", src);
 }
@@ -91,6 +188,10 @@ static cJSON *cfg_to_json(const k85_config_t *c) {
     cJSON_AddBoolToObject(root, "post_beep_enabled", c->post_beep_enabled);
     cJSON_AddNumberToObject(root, "alarm_volume_idx", c->alarm_volume_idx);
     cJSON_AddBoolToObject(root, "sound_muted", c->sound_muted);
+    cJSON_AddNumberToObject(root, "sb_flags", (double)c->sb_flags);
+    cJSON_AddNumberToObject(root, "sb_bg_color", (double)c->sb_bg_color);
+    cJSON_AddNumberToObject(root, "ap_channel", c->ap_channel);
+    cJSON_AddBoolToObject(root, "ap_open", c->ap_open);
 
     cJSON *hs = cJSON_CreateObject();
     cJSON_AddNumberToObject(hs, "2048",    c->high_scores.game_2048);
@@ -105,7 +206,9 @@ static cJSON *cfg_to_json(const k85_config_t *c) {
 
     cJSON *w = cJSON_CreateObject();
     cJSON_AddStringToObject(w, "ssid", c->wifi_ssid);
-    cJSON_AddStringToObject(w, "password", c->wifi_password);
+    char wifi_password_enc[192];
+    encrypt_to_hex(c->wifi_password, wifi_password_enc, sizeof(wifi_password_enc));
+    cJSON_AddStringToObject(w, "password", wifi_password_enc);
     cJSON_AddBoolToObject(w, "saved", c->wifi_saved);
     cJSON_AddItemToObject(root, "wifi", w);
 
@@ -113,7 +216,9 @@ static cJSON *cfg_to_json(const k85_config_t *c) {
     for (int i = 0; i < c->wifi_networks_count && i < K85_MAX_WIFI_NETWORKS; i++) {
         cJSON *el = cJSON_CreateObject();
         cJSON_AddStringToObject(el, "ssid", c->wifi_networks[i].ssid);
-        cJSON_AddStringToObject(el, "password", c->wifi_networks[i].password);
+        char net_pass_enc[192];
+        encrypt_to_hex(c->wifi_networks[i].password, net_pass_enc, sizeof(net_pass_enc));
+        cJSON_AddStringToObject(el, "password", net_pass_enc);
         cJSON_AddItemToArray(nets, el);
     }
     cJSON_AddItemToObject(root, "wifi_networks", nets);
@@ -146,6 +251,10 @@ static void cfg_from_json(cJSON *root, k85_config_t *out) {
     { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "post_beep_enabled"); if (_x) out->post_beep_enabled = cJSON_IsTrue(_x); }
     { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "alarm_volume_idx"); if (_x && cJSON_IsNumber(_x)) out->alarm_volume_idx = _x->valueint; }
     { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "sound_muted"); if (_x) out->sound_muted = cJSON_IsTrue(_x); }
+    { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "sb_flags"); if (_x && cJSON_IsNumber(_x)) out->sb_flags = (uint32_t)_x->valuedouble; }
+    { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "sb_bg_color"); if (_x && cJSON_IsNumber(_x)) out->sb_bg_color = (uint32_t)_x->valuedouble; }
+    { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "ap_channel"); if (_x && cJSON_IsNumber(_x)) out->ap_channel = _x->valueint; }
+    { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "ap_open"); if (_x) out->ap_open = cJSON_IsTrue(_x); }
 #undef GET_INT
 
     cJSON *hs = cJSON_GetObjectItemCaseSensitive(root, "high_scores");
@@ -322,6 +431,10 @@ void k85_set_sound_volume(int v) {
     g_config.sound_volume = v;
     k85_config_save();
 }
+
+
+
+
 
 
 

@@ -43,6 +43,9 @@
          "core/post_beep.cpp"
          "core/bios_theme.cpp"
          "core/boot_theme.cpp"
+         "core/status_bar.cpp"
+         "ui/status_bar_settings.cpp"
+         "apps/wifi_menu.cpp"
          "apps/k85os_menu.cpp"
          "apps/test_mode.cpp"
          "net/ota.cpp"
@@ -66,6 +69,8 @@ set_source_files_properties(
     "ble_hid/esp_hidd_prf_api.c"
     PROPERTIES COMPILE_OPTIONS "-Wno-unused-const-variable"
 )
+
+
 
 
 

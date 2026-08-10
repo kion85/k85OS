@@ -2,6 +2,7 @@
 #include "common.h"
 #include "theme.h"
 #include "battery.h"
+#include "../core/status_bar.h"
 #include "power.h"
 #include "input.h"
 #include "sound.h"
@@ -16,6 +17,7 @@
 #include "games_menu.h"
 #include "rtc_ntp.h"
 #include "clock_menu.h"
+#include "../apps/wifi_menu.h"
 #include "wifi.h"
 #include "M5Unified.h"
 
@@ -27,7 +29,7 @@
 
 static const char *const K85_MENU_ITEMS[] = {
     "Low tone", "High tone", "Both tones", "Cube", "Colors",
-    "Clock", "Store", "Tools", "Games", "Settings", "System info", "Logs", "Notifications",
+    "Clock", "WiFi", "Store", "Tools", "Games", "Settings", "System info", "Logs", "Notifications",
 };
 #define K85_MENU_ITEM_COUNT (int)(sizeof(K85_MENU_ITEMS) / sizeof(K85_MENU_ITEMS[0]))
 
@@ -365,6 +367,8 @@ static void run_action(int index) {
         run_cube();
     } else if (!strcmp(item, "Clock")) {
         k85_run_clock_menu();
+    } else if (!strcmp(item, "WiFi")) {
+        k85_run_wifi_menu();
     } else if (!strcmp(item, "Games")) {
         k85_run_games_menu();
     } else if (!strcmp(item, "Colors")) {
@@ -390,6 +394,9 @@ void k85_menu_activate(void) {
     run_action(s_selected);
     k85_menu_draw();
 }
+
+
+
 
 
 

@@ -1,4 +1,4 @@
-#include "files.h"
+﻿#include "files.h"
 #include "common.h"
 #include "text_input.h"
 #include "list_menu.h"
@@ -21,38 +21,104 @@
 
 #define K85_CUSTOM_THEME_MAX_HINT 8
 
-static void browse_dir(const char *root) {
-    char lines_buf[16][64];
-    const char *lines[16];
+#define K85_FB_MAX_ENTRIES 40
+
+struct FbEntry {
+    char name[48];
+    bool is_dir;
+    long size;
+};
+
+static int fb_list_entries(const char *dir_path, FbEntry out[], int max_n) {
+    DIR *d = opendir(dir_path);
+    if (!d) return -1;
+
     int n = 0;
-
-    DIR *d = opendir(root);
-    if (!d) {
-        snprintf(lines_buf[0], 64, "%s - not mounted", root);
-        lines[0] = lines_buf[0];
-        k85_area_show(lines, 1, "FILES");
-        return;
-    }
-
-    snprintf(lines_buf[n], 64, "%s", root);
-    lines[n] = lines_buf[n]; n++;
-
     struct dirent *ent;
-    while ((ent = readdir(d)) != nullptr && n < 16) {
-        char full[256];
-        snprintf(full, sizeof(full), "%s/%s", root, ent->d_name);
+    while ((ent = readdir(d)) != nullptr && n < max_n) {
+        if (!strcmp(ent->d_name, ".") || !strcmp(ent->d_name, "..")) continue;
+        char full[300];
+        snprintf(full, sizeof(full), "%s/%s", dir_path, ent->d_name);
         struct stat st;
-        if (stat(full, &st) == 0) {
-            bool is_dir = S_ISDIR(st.st_mode);
-            snprintf(lines_buf[n], 64, "%s%.40s %ldB", is_dir ? "[DIR] " : "      ",
-                     ent->d_name, (long)st.st_size);
-        } else {
-            snprintf(lines_buf[n], 64, "      %.50s", ent->d_name);
-        }
-        lines[n] = lines_buf[n]; n++;
+        if (stat(full, &st) != 0) continue;
+
+        snprintf(out[n].name, sizeof(out[n].name), "%.44s", ent->d_name);
+        out[n].is_dir = S_ISDIR(st.st_mode);
+        out[n].size = out[n].is_dir ? 0 : (long)st.st_size;
+        n++;
     }
     closedir(d);
-    k85_area_show(lines, n, "FILES");
+    return n;
+}
+
+// Полноценный браузер: заходим в папки, поднимаемся через "..", видим размеры файлов.
+static void browse_dir(const char *root) {
+    char current[256];
+    snprintf(current, sizeof(current), "%s", root);
+
+    static FbEntry entries[K85_FB_MAX_ENTRIES];
+
+    while (true) {
+        int n = fb_list_entries(current, entries, K85_FB_MAX_ENTRIES);
+        if (n < 0) {
+            char msg[80];
+            snprintf(msg, sizeof(msg), "%s - not mounted\nA+B=back", root);
+            k85_show_message(msg);
+            while (true) {
+                k85_input_update();
+                if (k85_ab_held(500)) { k85_wait_ab_release(); break; }
+                vTaskDelay(pdMS_TO_TICKS(30));
+            }
+            return;
+        }
+
+        bool at_root = (strcmp(current, root) == 0);
+        static char labels[K85_FB_MAX_ENTRIES][64];
+        const char *items[K85_FB_MAX_ENTRIES + 2];
+
+        int idx_offset = 0;
+        if (!at_root) items[idx_offset++] = "..";
+
+        for (int i = 0; i < n; i++) {
+            if (entries[i].is_dir) {
+                snprintf(labels[i], sizeof(labels[i]), "[DIR] %.44s", entries[i].name);
+            } else {
+                snprintf(labels[i], sizeof(labels[i]), "%.40s (%ldB)", entries[i].name, entries[i].size);
+            }
+            items[idx_offset + i] = labels[i];
+        }
+        items[idx_offset + n] = "Back (exit)";
+
+        int total = idx_offset + n + 1;
+        int sel = k85_run_list_menu(current, items, total, nullptr);
+        if (sel < 0 || sel == total - 1) return;
+
+        if (!at_root && sel == 0) {
+            char *last_slash = strrchr(current, '/');
+            if (last_slash && last_slash != current) *last_slash = 0;
+            continue;
+        }
+
+        int local_idx = sel - idx_offset;
+        if (local_idx < 0 || local_idx >= n) continue;
+
+        if (entries[local_idx].is_dir) {
+            char next[300];
+            snprintf(next, sizeof(next), "%s/%s", current, entries[local_idx].name);
+            snprintf(current, sizeof(current), "%s", next);
+        } else {
+            char full_path[300];
+            snprintf(full_path, sizeof(full_path), "%s/%s", current, entries[local_idx].name);
+            char msg[100];
+            snprintf(msg, sizeof(msg), "%.44s\nSize: %ldB\nA+B=back", entries[local_idx].name, entries[local_idx].size);
+            k85_show_message(msg);
+            while (true) {
+                k85_input_update();
+                if (k85_ab_held(500)) { k85_wait_ab_release(); break; }
+                vTaskDelay(pdMS_TO_TICKS(30));
+            }
+        }
+    }
 }
 
 static void sd_info(void) {

@@ -11,7 +11,7 @@
 #include "freertos/task.h"
 #include <cstdio>
 
-#define K85_QS_ITEM_COUNT 5
+#define K85_QS_ITEM_COUNT 6
 
 enum {
     QS_BRIGHTNESS = 0,
@@ -19,6 +19,7 @@ enum {
     QS_BLUETOOTH,
     QS_FLASHLIGHT,
     QS_SOUND,
+    QS_BACK,
 };
 
 static int s_qs_selected = 0;
@@ -93,6 +94,7 @@ static void qs_activate_selected(void) {
         case QS_BLUETOOTH:  /* индикатор, без действия */ break;
         case QS_FLASHLIGHT: qs_run_flashlight();   break;
         case QS_SOUND:      qs_toggle_sound();     break;
+        case QS_BACK:       break; // обрабатывается отдельно в k85_quick_settings_open
     }
 }
 
@@ -136,6 +138,9 @@ static void qs_draw(void) {
             case QS_SOUND:
                 snprintf(line, sizeof(line), "Sound: %s", s_muted_prev_volume >= 0 ? "Muted" : "On");
                 break;
+            case QS_BACK:
+                snprintf(line, sizeof(line), "Back");
+                break;
         }
         M5.Display.print(line);
     }
@@ -160,6 +165,9 @@ void k85_quick_settings_open(void) {
         }
 
         if (k85_btn_b_pressed()) {
+            if (s_qs_selected == QS_BACK) {
+                return;
+            }
             qs_activate_selected();
             qs_draw();
         }
@@ -167,3 +175,4 @@ void k85_quick_settings_open(void) {
         vTaskDelay(pdMS_TO_TICKS(30));
     }
 }
+

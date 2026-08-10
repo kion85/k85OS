@@ -19,6 +19,7 @@
 #include "net/ota.h"
 #include "core/post_beep.h"
 #include "net/wifi.h"
+#include "core/status_bar.h"
 using namespace k85;
 
 #include "freertos/FreeRTOS.h"
@@ -95,9 +96,17 @@ extern "C" void app_main(void) {
     k85_lock_screen_loop();
     k85_menu_draw();
 
+    int64_t last_sb_refresh_us = 0;
+
     while (true) {
         k85_input_update();
         k85_step_counter_update();
+
+        int64_t now_sb_us = esp_timer_get_time();
+        if (now_sb_us - last_sb_refresh_us > 1000000) { // раз в секунду
+            k85_status_bar_draw();
+            last_sb_refresh_us = now_sb_us;
+        }
 
         if (k85_power_tick()) {
             k85_lock_screen_loop();
@@ -144,6 +153,7 @@ extern "C" void app_main(void) {
         vTaskDelay(pdMS_TO_TICKS(30));
     }
 }
+
 
 
 

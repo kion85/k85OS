@@ -12,6 +12,7 @@
 #include "../net/ota.h"
 #include "../core/version.h"
 #include "text_input.h"
+#include "status_bar_settings.h"
 #include "mbedtls/sha256.h"
 
 #include "M5Unified.h"
@@ -21,13 +22,13 @@
 #include <cstdio>
 #include <cstddef>
 
-#define K85_SETTINGS_ITEM_COUNT 11
+#define K85_SETTINGS_ITEM_COUNT 12
 #define K85_SETTINGS_BACK_IDX   (K85_SETTINGS_ITEM_COUNT - 1)
 
 static const char *k85_settings_labels[K85_SETTINGS_ITEM_COUNT] = {
     "Theme", "Brightness", "Battery mode", "Boot style",
     "Device name", "Sound volume", "WiFi", "Reset steps",
-    "Check for updates", "Screen lock", "Back",
+    "Check for updates", "Screen lock", "Status bar", "Back",
 };
 
 static int s_selected = 0;
@@ -63,7 +64,8 @@ static void settings_value_str(char *out, size_t out_size, int idx) {
         case 7: snprintf(out, out_size, "%d", g_config.step_count); break;
         case 8: snprintf(out, out_size, "v%s", K85_FW_VERSION); break;
         case 9: snprintf(out, out_size, "%s", g_config.lock_enabled ? "ON" : "OFF"); break;
-        case 10: out[0] = 0; break; // Back - без значения
+        case 10: out[0] = 0; break;
+        case 11: out[0] = 0; break; // Back - без значения
         default: out[0] = 0;
     }
 }
@@ -268,6 +270,9 @@ static void settings_apply_item(int idx) {
             lock_done:
             break;
         }
+        case 10:
+            k85_run_status_bar_settings();
+            break;
         default:
             break;
     }
@@ -304,6 +309,7 @@ void k85_run_settings_menu(void) {
         vTaskDelay(pdMS_TO_TICKS(30));
     }
 }
+
 
 
 

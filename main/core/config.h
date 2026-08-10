@@ -46,6 +46,10 @@ typedef struct {
     bool post_beep_enabled;
     int alarm_volume_idx;
     bool sound_muted;
+    uint32_t sb_flags; // битовые флаги статус-бара главного меню
+    uint32_t sb_bg_color; // 0xFFFFFFFF = использовать фон темы
+    int ap_channel; // 1-13, канал точки доступа Hotspot
+    bool ap_open;   // true = открытая сеть без пароля, false = WPA2
     k85_high_scores_t high_scores;
 
     // "wifi" (С‚РµРєСѓС‰Р°СЏ СЃРµС‚СЊ)
@@ -78,6 +82,8 @@ bool k85_set_low_score_if_better(const char *game, int value);
 
 int  k85_get_sound_volume(void);
 void k85_set_sound_volume(int v);
+
+
 
 
 

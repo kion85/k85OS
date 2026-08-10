@@ -6,6 +6,7 @@
 #include "log.h"
 #include "list_menu.h"
 #include "text_input.h"
+#include "../../core/config.h"
 
 #include "esp_wifi.h"
 #include "esp_netif.h"
@@ -594,8 +595,12 @@ void k85_wifi_hotspot_regenerate_key(void) {
 }
 
 void k85_run_wifi_hotspot(void) {
-    char password[32];
-    if (!choose_ap_password(password, sizeof(password))) return;
+    char password[32] = "";
+    bool is_open = g_config.ap_open;
+
+    if (!is_open) {
+        if (!choose_ap_password(password, sizeof(password))) return;
+    }
 
     gen_random_string(s_web_access_key, 6 + (int)(esp_random() % 5), true);
 
@@ -610,13 +615,20 @@ void k85_run_wifi_hotspot(void) {
     char ssid[32];
     snprintf(ssid, sizeof(ssid), "k85OS-%02X%02X", mac[4], mac[5]);
 
+    int channel = g_config.ap_channel;
+    if (channel < 1 || channel > 13) channel = 1;
+
     wifi_config_t ap_config = {};
     snprintf((char *)ap_config.ap.ssid, sizeof(ap_config.ap.ssid), "%s", ssid);
     ap_config.ap.ssid_len = strlen(ssid);
-    snprintf((char *)ap_config.ap.password, sizeof(ap_config.ap.password), "%s", password);
-    ap_config.ap.authmode = WIFI_AUTH_WPA2_PSK;
+    if (!is_open) {
+        snprintf((char *)ap_config.ap.password, sizeof(ap_config.ap.password), "%s", password);
+        ap_config.ap.authmode = WIFI_AUTH_WPA2_PSK;
+    } else {
+        ap_config.ap.authmode = WIFI_AUTH_OPEN;
+    }
     ap_config.ap.max_connection = 4;
-    ap_config.ap.channel = 1;
+    ap_config.ap.channel = (uint8_t)channel;
 
     esp_wifi_set_mode(WIFI_MODE_AP);
     esp_wifi_set_config(WIFI_IF_AP, &ap_config);
@@ -697,6 +709,7 @@ void k85_run_wifi_hotspot(void) {
 }
 
 #pragma GCC diagnostic pop
+
 
 
 
