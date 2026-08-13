@@ -20,6 +20,7 @@
 #include "core/post_beep.h"
 #include "net/wifi.h"
 #include "core/status_bar.h"
+#include "esp_ota_ops.h"
 using namespace k85;
 
 #include "freertos/FreeRTOS.h"
@@ -87,6 +88,8 @@ extern "C" void app_main(void) {
     k85_post_report_check(post_report, PostCode::BATTERY_LOW, battery_ok);
     k85_post_finish(post_report);
 
+    esp_ota_mark_app_valid_cancel_rollback(); // подтверждаем, что текущая (в т.ч. только что установленная OTA) прошивка рабочая — иначе следующая перезагрузка без этой отметки откатит бутлоадер на прошлый слот
+
     k85_show_boot_screen();
 
     k85_ota_start_background_check(6 * 60 * 60 * 1000); // проверка раз в 6 часов
@@ -153,6 +156,7 @@ extern "C" void app_main(void) {
         vTaskDelay(pdMS_TO_TICKS(30));
     }
 }
+
 
 
 

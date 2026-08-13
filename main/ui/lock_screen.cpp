@@ -8,7 +8,7 @@
 #include "device.h"
 #include "step_counter.h"
 #include "text_input.h"
-#include "mbedtls/sha256.h"
+#include "../core/lock_auth.h"
 #include <cstring>
 #include "M5Unified.h"
 #include "esp_timer.h"
@@ -87,7 +87,15 @@ static void draw_lock_screen() {
         p.vy += 0.05f;
         if (p.x < 0 || p.x > w) { p.vx *= -0.8f; if (p.x < 0) p.x = 0; if (p.x > w) p.x = (float)w; }
         if (p.y < 0 || p.y > h) { p.vy *= -0.8f; if (p.y < 0) p.y = 0; if (p.y > h) p.y = (float)h; }
-        M5.Display.fillCircle((int)p.x, (int)p.y, p.size, p.color);
+
+        uint32_t draw_color = (g_config.lock_particle_color == 0xFFFFFFFF) ? p.color : g_config.lock_particle_color;
+        int shape = g_config.lock_shape;
+        bool draw_square = (shape == 1) || (shape == 2 && (i % 2 == 1));
+        if (draw_square) {
+            M5.Display.fillRect((int)p.x - p.size, (int)p.y - p.size, p.size * 2, p.size * 2, draw_color);
+        } else {
+            M5.Display.fillCircle((int)p.x, (int)p.y, p.size, draw_color);
+        }
     }
 
     const char *t = k85_get_time_str();
@@ -157,12 +165,7 @@ void k85_lock_screen_loop(void) {
                 char entered[32] = "";
                 bool submitted = k85_text_input("Enter password:", "", entered, sizeof(entered));
 
-                unsigned char hash[32];
-                mbedtls_sha256((const unsigned char *)entered, strlen(entered), hash, 0);
-                char hash_hex[65];
-                for (int i = 0; i < 32; i++) snprintf(hash_hex + i * 2, 3, "%02x", hash[i]);
-
-                if (submitted && strcmp(hash_hex, g_config.lock_password) == 0) {
+                if (submitted && k85_lock_verify_password(entered, g_config.lock_password)) {
                     s_particles_init = false;
                     k85_wake_screen();
                     return;
@@ -177,4 +180,6 @@ void k85_lock_screen_loop(void) {
         vTaskDelay(pdMS_TO_TICKS(50));
     }
 }
+
+
 

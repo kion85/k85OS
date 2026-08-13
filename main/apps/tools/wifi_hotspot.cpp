@@ -590,7 +590,7 @@ static bool choose_ap_password(char *out_password, size_t out_size) {
 }
 
 void k85_wifi_hotspot_regenerate_key(void) {
-    gen_random_string(s_web_access_key, 6 + (int)(esp_random() % 5), true);
+    gen_random_string(s_web_access_key, 6 + (int)(esp_random() % 5), false); // буквы+цифры вместо только цифр — больше энтропии
     k85_log("web-fm: access key regenerated");
 }
 
@@ -602,7 +602,7 @@ void k85_run_wifi_hotspot(void) {
         if (!choose_ap_password(password, sizeof(password))) return;
     }
 
-    gen_random_string(s_web_access_key, 6 + (int)(esp_random() % 5), true);
+    gen_random_string(s_web_access_key, 6 + (int)(esp_random() % 5), false); // буквы+цифры вместо только цифр — больше энтропии
 
     k85_wifi_init();
 
@@ -709,6 +709,7 @@ void k85_run_wifi_hotspot(void) {
 }
 
 #pragma GCC diagnostic pop
+
 
 
 

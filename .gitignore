@@ -5,3 +5,8 @@ sdkconfig.old
 *.pyc
 __pycache__/
 dependencies.lock
+
+# Generated build artifacts — не хранить в репо
+sdkconfig
+ptable_dump*.bin
+pytest_hello_world.py

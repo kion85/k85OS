@@ -1,4 +1,4 @@
-#include "boot_screen.h"
+﻿#include "boot_screen.h"
 #include "config.h"
 #include "theme.h"
 #include "boot_theme.h"
@@ -15,7 +15,7 @@
 #include <cstring>
 #include <cmath>
 
-#define K85_FW_VERSION "4.4"
+#define K85_FW_VERSION "4.5"
 #define K85_BOOT_DURATION_MS 4000
 #define K85_BOOT_MENU_TIMEOUT_MS 3000
 
@@ -126,6 +126,65 @@ static void boot_static_text(int title_y) {
     vTaskDelay(pdMS_TO_TICKS(K85_BOOT_DURATION_MS));
 }
 
+// ---------- Логотип: чиби-капибара с долькой апельсина (векторная отрисовка) ----------
+static void draw_capybara_logo(int cx, int cy) {
+    // Палитра фиксированная (не завязана на тему — маскот всегда узнаваем)
+    uint32_t body_col   = 0x8B6F47;
+    uint32_t muzzle_col = 0xE8D5B0;
+    uint32_t dark_col   = 0x3A2E20;
+    uint32_t orange_col = 0xFFA500;
+    uint32_t orange_seg = 0xFFF3D6;
+
+    // Туловище (широкий овал снизу)
+    M5.Display.fillRoundRect(cx - 32, cy + 6, 64, 30, 14, body_col);
+
+    // Голова (большой круг)
+    M5.Display.fillCircle(cx, cy - 6, 26, body_col);
+
+    // Уши (два маленьких кружка сверху)
+    M5.Display.fillCircle(cx - 16, cy - 26, 7, body_col);
+    M5.Display.fillCircle(cx + 16, cy - 26, 7, body_col);
+    M5.Display.fillCircle(cx - 16, cy - 26, 4, dark_col);
+    M5.Display.fillCircle(cx + 16, cy - 26, 4, dark_col);
+
+    // Мордочка (светлое пятно снизу головы)
+    M5.Display.fillRoundRect(cx - 16, cy - 2, 32, 18, 8, muzzle_col);
+
+    // Глаза (сонный полузакрытый взгляд — тонкие горизонтальные штрихи)
+    M5.Display.fillRoundRect(cx - 12, cy - 8, 6, 3, 1, dark_col);
+    M5.Display.fillRoundRect(cx + 6,  cy - 8, 6, 3, 1, dark_col);
+
+    // Нос (маленькая трапеция)
+    M5.Display.fillTriangle(cx - 4, cy + 2, cx + 4, cy + 2, cx, cy + 7, dark_col);
+
+    // Долька апельсина на макушке
+    int ox = cx, oy = cy - 34;
+    M5.Display.fillCircle(ox, oy, 10, orange_col);
+    for (int i = -2; i <= 2; i++) {
+        M5.Display.drawLine(ox, oy, ox + i * 3, oy - 9, orange_seg);
+    }
+    M5.Display.drawCircle(ox, oy, 10, orange_seg);
+}
+
+// Показывает статичный логотип на K85_LOGO_DURATION_MS перед появлением GRUB-меню.
+#define K85_LOGO_DURATION_MS 1000
+static void show_pre_boot_logo(const K85BootTheme &theme) {
+    int W = M5.Display.width();
+    int H = M5.Display.height();
+
+    M5.Display.fillScreen(theme.bg);
+    draw_capybara_logo(W / 2, H / 2 - 10);
+
+    M5.Display.setTextSize(1);
+    M5.Display.setTextColor(theme.accent, theme.bg);
+    const char *text = "k85OS";
+    int approx_w = (int)strlen(text) * 6;
+    M5.Display.setCursor((W - approx_w) / 2, H / 2 + 44);
+    M5.Display.print(text);
+
+    vTaskDelay(pdMS_TO_TICKS(K85_LOGO_DURATION_MS));
+}
+
 // ---------- GRUB-style boot menu ----------
 enum BootChoice { BOOT_NORMAL = 0, BOOT_BIOS = 1, BOOT_TEST = 2 };
 
@@ -165,9 +224,9 @@ static void draw_boot_menu(int selected, int seconds_left) {
     }
 }
 
-// Показывает GRUB-подобное меню на K85_BOOT_MENU_TIMEOUT_MS.
-// Если пользователь ничего не нажал — обычная загрузка. Если нажал A —
-// таймер отменяется, дальше свободная навигация.
+// РџРѕРєР°Р·С‹РІР°РµС‚ GRUB-РїРѕРґРѕР±РЅРѕРµ РјРµРЅСЋ РЅР° K85_BOOT_MENU_TIMEOUT_MS.
+// Р•СЃР»Рё РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРёС‡РµРіРѕ РЅРµ РЅР°Р¶Р°Р» вЂ” РѕР±С‹С‡РЅР°СЏ Р·Р°РіСЂСѓР·РєР°. Р•СЃР»Рё РЅР°Р¶Р°Р» A вЂ”
+// С‚Р°Р№РјРµСЂ РѕС‚РјРµРЅСЏРµС‚СЃСЏ, РґР°Р»СЊС€Рµ СЃРІРѕР±РѕРґРЅР°СЏ РЅР°РІРёРіР°С†РёСЏ.
 static BootChoice run_boot_menu(void) {
     int selected = 0;
     bool interacted = false;
@@ -207,7 +266,16 @@ static BootChoice run_boot_menu(void) {
 void k85_show_boot_screen(void) {
     s_boot_theme = k85_boot_theme_load();
 
-    BootChoice choice = run_boot_menu();
+    show_pre_boot_logo(s_boot_theme);
+
+    BootChoice choice;
+    if (g_config.grub_enabled) {
+        choice = run_boot_menu();
+    } else {
+        int c = g_config.default_boot_choice;
+        if (c < 0 || c > 2) c = 0;
+        choice = (BootChoice)c;
+    }
 
     if (choice == BOOT_BIOS) {
         k85_run_bios_menu();
@@ -229,3 +297,5 @@ void k85_show_boot_screen(void) {
         default: boot_static_text(title_y); break;
     }
 }
+
+

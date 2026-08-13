@@ -13,7 +13,8 @@
 #include "../core/version.h"
 #include "text_input.h"
 #include "status_bar_settings.h"
-#include "mbedtls/sha256.h"
+#include "lock_screen_settings.h"
+#include "../core/lock_auth.h"
 
 #include "M5Unified.h"
 #include "freertos/FreeRTOS.h"
@@ -22,13 +23,13 @@
 #include <cstdio>
 #include <cstddef>
 
-#define K85_SETTINGS_ITEM_COUNT 12
+#define K85_SETTINGS_ITEM_COUNT 14
 #define K85_SETTINGS_BACK_IDX   (K85_SETTINGS_ITEM_COUNT - 1)
 
 static const char *k85_settings_labels[K85_SETTINGS_ITEM_COUNT] = {
     "Theme", "Brightness", "Battery mode", "Boot style",
     "Device name", "Sound volume", "WiFi", "Reset steps",
-    "Check for updates", "Screen lock", "Status bar", "Back",
+    "Check for updates", "Screen lock", "Status bar", "BG gradient", "Lock screen", "Back",
 };
 
 static int s_selected = 0;
@@ -65,7 +66,9 @@ static void settings_value_str(char *out, size_t out_size, int idx) {
         case 8: snprintf(out, out_size, "v%s", K85_FW_VERSION); break;
         case 9: snprintf(out, out_size, "%s", g_config.lock_enabled ? "ON" : "OFF"); break;
         case 10: out[0] = 0; break;
-        case 11: out[0] = 0; break; // Back - без значения
+        case 11: snprintf(out, out_size, "%s", g_config.bg_gradient_enabled ? "ON" : "OFF"); break;
+        case 12: out[0] = 0; break;
+        case 13: out[0] = 0; break; // Back - без значения
         default: out[0] = 0;
     }
 }
@@ -253,11 +256,7 @@ static void settings_apply_item(int idx) {
             } else {
                 char pass[32] = "";
                 if (k85_text_input("Set lock password:", "", pass, sizeof(pass)) && pass[0]) {
-                    unsigned char hash[32];
-                    mbedtls_sha256((const unsigned char *)pass, strlen(pass), hash, 0);
-                    for (int i = 0; i < 32; i++) {
-                        snprintf(g_config.lock_password + i * 2, 3, "%02x", hash[i]);
-                    }
+                    k85_lock_hash_password(pass, g_config.lock_password, sizeof(g_config.lock_password));
                     g_config.lock_enabled = true;
                     k85_show_message("Screen lock enabled\nA+B=back");
                     while (true) {
@@ -272,6 +271,12 @@ static void settings_apply_item(int idx) {
         }
         case 10:
             k85_run_status_bar_settings();
+            break;
+        case 11:
+            g_config.bg_gradient_enabled = !g_config.bg_gradient_enabled;
+            break;
+        case 12:
+            k85_run_lock_screen_settings();
             break;
         default:
             break;
@@ -309,6 +314,8 @@ void k85_run_settings_menu(void) {
         vTaskDelay(pdMS_TO_TICKS(30));
     }
 }
+
+
 
 
 

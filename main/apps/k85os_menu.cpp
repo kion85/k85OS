@@ -1,4 +1,4 @@
-﻿#include "k85os_menu.h"
+#include "k85os_menu.h"
 #include "common.h"
 #include "theme.h"
 #include "battery.h"
@@ -6,8 +6,11 @@
 #include "input.h"
 #include "config.h"
 #include "wifi.h"
+#include "list_menu.h"
 #include "../core/post_beep.h"
 #include "../core/bios_theme.h"
+#include "../core/version.h"
+#include "../net/app_repo.h"
 
 #include "M5Unified.h"
 #include "esp_heap_caps.h"
@@ -23,17 +26,19 @@
 
 #include <cstdio>
 #include <cstring>
+#include <sys/stat.h>
 
 using namespace k85;
 
-#define K85_BIOS_ITEM_COUNT 17
+#define K85_BIOS_ITEM_COUNT 21
 #define K85_BIOS_VISIBLE_ROWS 6
 
 static const char *k85_bios_labels[K85_BIOS_ITEM_COUNT] = {
     "WiFi module", "Bluetooth module", "OTA lock (soft)",
     "RAM / ROM info", "Chip info", "Uptime",
     "Active OTA slot", "Rollback firmware", "MAC address", "Battery voltage",
-    "POST beep", "POST beep info", "Mute all sound",
+    "Update UEFI theme", "Customization",
+    "POST beep", "POST beep info", "Mute all sound", "GRUB menu", "Boot options",
     "Wipe WiFi networks", "Reset config", "Factory reset",
     "Reboot",
 };
@@ -60,8 +65,16 @@ static void bios_value_str(char *out, size_t out_size, int idx) {
             snprintf(out, out_size, "%s", p ? p->label : "?");
             break;
         }
-        case 10: snprintf(out, out_size, "%s", g_config.post_beep_enabled ? "ON" : "OFF"); break;
-        case 12: snprintf(out, out_size, "%s", g_config.sound_muted ? "MUTED" : "unmuted"); break;
+        case 12: snprintf(out, out_size, "%s", g_config.post_beep_enabled ? "ON" : "OFF"); break;
+        case 14: snprintf(out, out_size, "%s", g_config.sound_muted ? "MUTED" : "unmuted"); break;
+        case 15: snprintf(out, out_size, "%s", g_config.grub_enabled ? "ON" : "OFF"); break;
+        case 16: {
+            static const char *names[3] = {"Normal", "BIOS", "Test Mode"};
+            int c = g_config.default_boot_choice;
+            if (c < 0 || c > 2) c = 0;
+            snprintf(out, out_size, "%s", names[c]);
+            break;
+        }
         default: out[0] = 0;
     }
 }
@@ -215,47 +228,241 @@ static void run_rollback(void) {
 
 static K85BiosTheme s_bios_theme;
 
+static void run_update_uefi_theme(void) {
+    if (!k85_wifi_is_connected()) {
+        k85_show_message("WiFi not connected\nA+B=back");
+        wait_ab_exit();
+        return;
+    }
+
+    k85_show_message("Fetching theme list...");
+
+    static char names[K85_APPREPO_MAX_ASSETS][64];
+    static char urls[K85_APPREPO_MAX_ASSETS][256];
+    int count = 0;
+
+    if (!k85_apprepo_fetch_uefi_theme_list(names, urls, K85_APPREPO_MAX_ASSETS, &count) || count == 0) {
+        k85_show_message("No themes found\nin apps_k85os/uefi\nA+B=back");
+        wait_ab_exit();
+        return;
+    }
+
+    const char *items[K85_APPREPO_MAX_ASSETS + 1];
+    for (int i = 0; i < count; i++) items[i] = names[i];
+    items[count] = "Back";
+
+    int idx = k85_run_list_menu("UEFI THEMES", items, count + 1, nullptr);
+    if (idx < 0 || idx >= count) return;
+
+    k85_show_message("Downloading...");
+
+    mkdir("/littlefs/bios", 0755);
+    char dest[192];
+    snprintf(dest, sizeof(dest), "/littlefs/bios/%s", names[idx]);
+
+    if (!k85_apprepo_download_file(urls[idx], dest)) {
+        k85_show_message("Download failed\nA+B=back");
+        wait_ab_exit();
+        return;
+    }
+
+    FILE *fsrc = fopen(dest, "rb");
+    FILE *fdst = fopen(K85_BIOS_THEME_ACTIVE_FILE, "wb");
+    if (fsrc && fdst) {
+        char buf[256];
+        size_t r;
+        while ((r = fread(buf, 1, sizeof(buf), fsrc)) > 0) fwrite(buf, 1, r, fdst);
+    }
+    if (fsrc) fclose(fsrc);
+    if (fdst) fclose(fdst);
+
+    s_bios_theme = k85_bios_theme_load();
+
+    char msg[80];
+    snprintf(msg, sizeof(msg), "Applied: %.40s\nA+B=back", names[idx]);
+    k85_show_message(msg);
+    wait_ab_exit();
+}
+
+// ---------- Customization ----------
+static const uint32_t K85_BIOS_COLOR_PRESETS[10] = {
+    0x000000, 0xFFFFFF, 0xFF0000, 0x00FF00, 0x0000FF,
+    0xFFFF00, 0xFF00FF, 0x00FFFF, 0x808080, 0xFFA500,
+};
+static const char *K85_BIOS_COLOR_NAMES[10] = {
+    "Black", "White", "Red", "Green", "Blue",
+    "Yellow", "Magenta", "Cyan", "Gray", "Orange",
+};
+
+static int color_preset_index(uint32_t color) {
+    for (int i = 0; i < 10; i++) if (K85_BIOS_COLOR_PRESETS[i] == color) return i;
+    return -1;
+}
+
+static void run_customization_menu(void) {
+    static const char *items[] = {"BG color", "Highlight color", "Text color", "Selection style", "Back"};
+    int selected = 0;
+
+    while (true) {
+        char labeled[5][32];
+        int bg_idx = color_preset_index(g_config.bios_bg_color);
+        int hl_idx = color_preset_index(g_config.bios_hl_color);
+        int tx_idx = color_preset_index(g_config.bios_text_color);
+
+        snprintf(labeled[0], sizeof(labeled[0]), "BG: %s", bg_idx < 0 ? "Default" : K85_BIOS_COLOR_NAMES[bg_idx]);
+        snprintf(labeled[1], sizeof(labeled[1]), "Highlight: %s", hl_idx < 0 ? "Default" : K85_BIOS_COLOR_NAMES[hl_idx]);
+        snprintf(labeled[2], sizeof(labeled[2]), "Text: %s", tx_idx < 0 ? "Default" : K85_BIOS_COLOR_NAMES[tx_idx]);
+        snprintf(labeled[3], sizeof(labeled[3]), "Select: %s", g_config.bios_selection_style == 0 ? "Filled" : "Arrow");
+        snprintf(labeled[4], sizeof(labeled[4]), "Back");
+        const char *display[5] = { labeled[0], labeled[1], labeled[2], labeled[3], labeled[4] };
+
+        int idx = k85_run_list_menu("CUSTOMIZATION", display, 5, nullptr);
+        if (idx < 0 || idx == 4) return;
+
+        if (idx == 3) {
+            g_config.bios_selection_style = (g_config.bios_selection_style + 1) % 2;
+            k85_config_save();
+            continue;
+        }
+
+        // Циклический выбор: Default -> 10 цветов -> Default...
+        uint32_t *target = (idx == 0) ? &g_config.bios_bg_color : (idx == 1) ? &g_config.bios_hl_color : &g_config.bios_text_color;
+        int cur = color_preset_index(*target);
+        cur++;
+        if (cur >= 10) {
+            *target = 0xFFFFFFFF; // назад к дефолту
+        } else {
+            *target = K85_BIOS_COLOR_PRESETS[cur];
+        }
+        k85_config_save();
+    }
+}
+
+static uint32_t darken(uint32_t color, int percent) {
+    int r = (color >> 16) & 0xFF;
+    int g = (color >> 8) & 0xFF;
+    int b = color & 0xFF;
+    r = r * (100 - percent) / 100;
+    g = g * (100 - percent) / 100;
+    b = b * (100 - percent) / 100;
+    return ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+}
+
+// Выбирает чёрный или белый текст в зависимости от яркости фона (контраст всегда читаем)
+static uint32_t contrast_color(uint32_t bg_color) {
+    int r = (bg_color >> 16) & 0xFF;
+    int g = (bg_color >> 8) & 0xFF;
+    int b = bg_color & 0xFF;
+    int luminance = (r * 299 + g * 587 + b * 114) / 1000;
+    return luminance > 140 ? 0x000000 : 0xFFFFFF;
+}
+
+static void draw_gradient_bg(uint32_t top_color, uint32_t bottom_color) {
+    int h = M5.Display.height();
+    int w = M5.Display.width();
+    int tr = (top_color >> 16) & 0xFF, tg = (top_color >> 8) & 0xFF, tb = top_color & 0xFF;
+    int br = (bottom_color >> 16) & 0xFF, bg_ = (bottom_color >> 8) & 0xFF, bb = bottom_color & 0xFF;
+
+    for (int y = 0; y < h; y++) {
+        float t = (float)y / (float)h;
+        int r = tr + (int)((br - tr) * t);
+        int g = tg + (int)((bg_ - tg) * t);
+        int b = tb + (int)((bb - tb) * t);
+        uint32_t row_color = ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+        M5.Display.drawFastHLine(0, y, w, row_color);
+    }
+}
+
+static void draw_uefi_border(void) {
+    int w = M5.Display.width();
+    int h = M5.Display.height();
+    uint32_t light = 0x8080FF;
+    uint32_t dark = 0x000020;
+
+    M5.Display.drawFastHLine(0, 0, w, light);
+    M5.Display.drawFastVLine(0, 0, h, light);
+    M5.Display.drawFastHLine(0, h - 1, w, dark);
+    M5.Display.drawFastVLine(w - 1, 0, h, dark);
+}
+
 static void bios_draw(void) {
     bios_clamp_scroll();
-    uint32_t bg = s_bios_theme.bg;
-    uint32_t fg = s_bios_theme.fg;
-    uint32_t accent = s_bios_theme.accent;
 
-    M5.Display.fillScreen(bg);
+    bool custom_bg = (g_config.bios_bg_color != 0xFFFFFFFF);
+    uint32_t base_bg = custom_bg ? g_config.bios_bg_color : s_bios_theme.bg;
+    uint32_t accent = (g_config.bios_hl_color != 0xFFFFFFFF) ? g_config.bios_hl_color : s_bios_theme.accent;
+    uint32_t fg = (g_config.bios_text_color != 0xFFFFFFFF) ? g_config.bios_text_color : s_bios_theme.fg;
+
+    uint32_t grad_top, grad_bottom;
+    if (custom_bg) {
+        grad_top = base_bg;
+        grad_bottom = base_bg; // сплошной цвет, без градиента
+    } else {
+        grad_top = darken(base_bg == 0x000000 ? 0x0000C0 : base_bg, 60);
+        grad_bottom = (base_bg == 0x000000) ? 0x0000C0 : base_bg;
+    }
+    draw_gradient_bg(grad_top, grad_bottom);
+    draw_uefi_border();
+
+    uint32_t header_fg = contrast_color(grad_top);
     M5.Display.setTextSize(1);
-    M5.Display.setCursor(4, 4);
-    M5.Display.setTextColor(accent, bg);
-    M5.Display.print("k85os-menu");
+    M5.Display.setCursor(6, 4);
+    M5.Display.setTextColor(header_fg, grad_top);
+    M5.Display.print("k85OS Setup Utility");
+    char ver[16];
+    snprintf(ver, sizeof(ver), "v%s", K85_FW_VERSION);
+    int w = M5.Display.width();
+    M5.Display.setCursor(w - (int)strlen(ver) * 6 - 6, 4);
+    M5.Display.print(ver);
 
-    int y = 20;
+    M5.Display.drawFastHLine(2, 14, w - 4, 0x5555AA);
+
+    bool filled_style = (g_config.bios_selection_style == 0);
+    uint32_t sel_text_color = contrast_color(accent);
+
+    int y = 22;
     char val[32];
     int last_visible = s_scroll_top + K85_BIOS_VISIBLE_ROWS;
     if (last_visible > K85_BIOS_ITEM_COUNT) last_visible = K85_BIOS_ITEM_COUNT;
 
-    int w = M5.Display.width();
     for (int i = s_scroll_top; i < last_visible; i++) {
         bool sel = (i == s_selected);
+        bool danger = (i == 19); // Factory reset
 
-        if (sel) {
+        uint32_t row_bg = (custom_bg ? base_bg : grad_bottom);
+        if (sel && filled_style) {
             M5.Display.fillRect(2, y - 2, w - 4, 13, accent);
         }
 
         M5.Display.setCursor(6, y);
-        M5.Display.setTextColor(sel ? bg : fg, sel ? accent : bg);
+        uint32_t item_fg;
+        uint32_t item_bg;
+        if (sel && filled_style) {
+            item_fg = sel_text_color;
+            item_bg = accent;
+        } else if (sel && !filled_style) {
+            item_fg = accent; // выделение только цветом текста при "стрелочном" стиле
+            item_bg = row_bg;
+        } else {
+            item_fg = danger ? 0xFF4444 : fg;
+            item_bg = row_bg;
+        }
+        M5.Display.setTextColor(item_fg, item_bg);
         M5.Display.print(sel ? "> " : "  ");
         M5.Display.print(k85_bios_labels[i]);
 
         bios_value_str(val, sizeof(val), i);
         if (val[0]) {
             M5.Display.setCursor(150, y);
-            M5.Display.setTextColor(sel ? bg : fg, sel ? accent : bg);
+            M5.Display.setTextColor(sel ? item_fg : 0xAAAAAA, item_bg);
             M5.Display.print(val);
         }
         y += 14;
     }
 
-    M5.Display.setTextColor(0x777777, bg);
-    M5.Display.setCursor(6, y + 6);
+    M5.Display.drawFastHLine(2, y + 2, w - 4, 0x5555AA);
+    M5.Display.setTextColor(contrast_color(grad_bottom), grad_bottom);
+    M5.Display.setCursor(6, y + 8);
     M5.Display.print("A=next B=select A+B=exit");
 
     k85_draw_battery_icon();
@@ -283,18 +490,28 @@ static void bios_apply(int idx) {
         case 7: run_rollback(); break;
         case 8: show_mac_address(); break;
         case 9: show_battery_voltage(); break;
-        case 10:
+        case 10: run_update_uefi_theme(); break;
+        case 11: run_customization_menu(); break;
+        case 12:
             g_config.post_beep_enabled = !g_config.post_beep_enabled;
             k85_post_set_enabled(g_config.post_beep_enabled);
             k85_config_save();
             break;
-        case 11: show_post_info(); break;
-        case 12:
+        case 13: show_post_info(); break;
+        case 14:
             g_config.sound_muted = !g_config.sound_muted;
             k85_apply_sound_volume();
             k85_config_save();
             break;
-        case 13:
+        case 15:
+            g_config.grub_enabled = !g_config.grub_enabled;
+            k85_config_save();
+            break;
+        case 16:
+            g_config.default_boot_choice = (g_config.default_boot_choice + 1) % 3;
+            k85_config_save();
+            break;
+        case 17:
             if (confirm_action("Wipe WiFi networks")) {
                 g_config.wifi_saved = false;
                 g_config.wifi_ssid[0] = 0;
@@ -305,7 +522,7 @@ static void bios_apply(int idx) {
                 wait_ab_exit();
             }
             break;
-        case 14:
+        case 18:
             if (confirm_action("Reset config to defaults")) {
                 k85_config_defaults(&g_config);
                 k85_config_save();
@@ -313,7 +530,7 @@ static void bios_apply(int idx) {
                 wait_ab_exit();
             }
             break;
-        case 15:
+        case 19:
             if (confirm_action("FACTORY RESET (wipe all data)")) {
                 k85_config_defaults(&g_config);
                 k85_config_save();
@@ -323,7 +540,7 @@ static void bios_apply(int idx) {
                 esp_restart();
             }
             break;
-        case 16:
+        case 20:
             if (confirm_action("Reboot device")) {
                 esp_restart();
             }
@@ -357,6 +574,3 @@ void k85_run_bios_menu(void) {
         vTaskDelay(pdMS_TO_TICKS(30));
     }
 }
-
-
-

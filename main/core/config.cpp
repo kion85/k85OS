@@ -10,6 +10,7 @@
 #include "mbedtls/aes.h"
 #include "mbedtls/sha256.h"
 #include "esp_wifi.h"
+#include "esp_random.h"
 
 static const char *TAG = "k85_cfg";
 
@@ -67,6 +68,15 @@ void k85_config_defaults(k85_config_t *cfg) {
     cfg->sb_bg_color = 0xFFFFFFFF;
     cfg->ap_channel = 1;
     cfg->ap_open = false;
+    cfg->bg_gradient_enabled = false;
+    cfg->lock_shape = 0;
+    cfg->lock_particle_color = 0xFFFFFFFF;
+    cfg->grub_enabled = true;
+    cfg->default_boot_choice = 0;
+    cfg->bios_bg_color = 0xFFFFFFFF;
+    cfg->bios_hl_color = 0xFFFFFFFF;
+    cfg->bios_text_color = 0xFFFFFFFF;
+    cfg->bios_selection_style = 0;
     cfg->wifi_saved       = false;
     cfg->wifi_networks_count = 0;
     // high_scores, step_count, step_record, step_date вЂ” СѓР¶Рµ 0/""
@@ -107,7 +117,7 @@ static bool hex_to_bytes(const char *hex, unsigned char *out, size_t out_max, si
     return true;
 }
 
-// Шифрует plaintext (до 64 байт) -> hex-строка в out (нужно >= 192 байт)
+// Шифрует plaintext (до 64 байт) -> hex-строка [16 байт IV][шифртекст] в out (нужно >= 224 байт)
 static void encrypt_to_hex(const char *plaintext, char *out, size_t out_size) {
     if (!plaintext[0]) { out[0] = 0; return; }
 
@@ -119,36 +129,50 @@ static void encrypt_to_hex(const char *plaintext, char *out, size_t out_size) {
     if (plen > 64) plen = 64;
     memcpy(buf, plaintext, plen);
 
-    // PKCS7-подобное дополнение до кратного 16
     size_t padded_len = ((plen / 16) + 1) * 16;
     unsigned char pad_val = (unsigned char)(padded_len - plen);
     for (size_t i = plen; i < padded_len; i++) buf[i] = pad_val;
 
-    unsigned char iv[16] = {0}; // фиксированный IV: приемлемо для коротких независимых строк на одном устройстве
+    unsigned char iv[16];
+    esp_fill_random(iv, sizeof(iv)); // случайный IV на каждую строку — убирает детерминизм шифра
+
+    unsigned char iv_for_crypt[16];
+    memcpy(iv_for_crypt, iv, 16); // mbedtls портит iv в процессе, шлём копию
+
     mbedtls_aes_context aes;
     mbedtls_aes_init(&aes);
     mbedtls_aes_setkey_enc(&aes, key, 128);
     unsigned char cipher[80];
-    mbedtls_aes_crypt_cbc(&aes, MBEDTLS_AES_ENCRYPT, padded_len, iv, buf, cipher);
+    mbedtls_aes_crypt_cbc(&aes, MBEDTLS_AES_ENCRYPT, padded_len, iv_for_crypt, buf, cipher);
     mbedtls_aes_free(&aes);
 
-    bytes_to_hex(cipher, padded_len, out);
-    out[padded_len * 2] = 0;
+    bytes_to_hex(iv, 16, out);
+    bytes_to_hex(cipher, padded_len, out + 32);
+    out[32 + padded_len * 2] = 0;
 }
 
-// Дешифрует hex-строку обратно в plaintext
+// Дешифрует [16 байт IV][шифртекст] обратно в plaintext
 static void decrypt_from_hex(const char *hex, char *out, size_t out_size) {
     out[0] = 0;
     if (!hex || !hex[0]) return;
 
+    size_t hlen = strlen(hex);
+    if (hlen < 32) return; // старый формат без IV (до этого обновления) — пропускаем, пароль придётся ввести заново
+
+    unsigned char iv[16];
+    size_t iv_len = 0;
+    char iv_hex[33];
+    memcpy(iv_hex, hex, 32);
+    iv_hex[32] = 0;
+    if (!hex_to_bytes(iv_hex, iv, sizeof(iv), &iv_len) || iv_len != 16) return;
+
     unsigned char cipher[80];
     size_t clen = 0;
-    if (!hex_to_bytes(hex, cipher, sizeof(cipher), &clen)) return;
+    if (!hex_to_bytes(hex + 32, cipher, sizeof(cipher), &clen)) return;
     if (clen == 0 || clen % 16 != 0) return;
 
     unsigned char key[16];
     get_aes_key(key);
-    unsigned char iv[16] = {0};
 
     mbedtls_aes_context aes;
     mbedtls_aes_init(&aes);
@@ -192,6 +216,15 @@ static cJSON *cfg_to_json(const k85_config_t *c) {
     cJSON_AddNumberToObject(root, "sb_bg_color", (double)c->sb_bg_color);
     cJSON_AddNumberToObject(root, "ap_channel", c->ap_channel);
     cJSON_AddBoolToObject(root, "ap_open", c->ap_open);
+    cJSON_AddBoolToObject(root, "bg_gradient_enabled", c->bg_gradient_enabled);
+    cJSON_AddNumberToObject(root, "lock_shape", c->lock_shape);
+    cJSON_AddNumberToObject(root, "lock_particle_color", (double)c->lock_particle_color);
+    cJSON_AddBoolToObject(root, "grub_enabled", c->grub_enabled);
+    cJSON_AddNumberToObject(root, "default_boot_choice", c->default_boot_choice);
+    cJSON_AddNumberToObject(root, "bios_bg_color", (double)c->bios_bg_color);
+    cJSON_AddNumberToObject(root, "bios_hl_color", (double)c->bios_hl_color);
+    cJSON_AddNumberToObject(root, "bios_text_color", (double)c->bios_text_color);
+    cJSON_AddNumberToObject(root, "bios_selection_style", c->bios_selection_style);
 
     cJSON *hs = cJSON_CreateObject();
     cJSON_AddNumberToObject(hs, "2048",    c->high_scores.game_2048);
@@ -255,6 +288,15 @@ static void cfg_from_json(cJSON *root, k85_config_t *out) {
     { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "sb_bg_color"); if (_x && cJSON_IsNumber(_x)) out->sb_bg_color = (uint32_t)_x->valuedouble; }
     { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "ap_channel"); if (_x && cJSON_IsNumber(_x)) out->ap_channel = _x->valueint; }
     { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "ap_open"); if (_x) out->ap_open = cJSON_IsTrue(_x); }
+    { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "bg_gradient_enabled"); if (_x) out->bg_gradient_enabled = cJSON_IsTrue(_x); }
+    { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "lock_shape"); if (_x && cJSON_IsNumber(_x)) out->lock_shape = _x->valueint; }
+    { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "lock_particle_color"); if (_x && cJSON_IsNumber(_x)) out->lock_particle_color = (uint32_t)_x->valuedouble; }
+    { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "grub_enabled"); if (_x) out->grub_enabled = cJSON_IsTrue(_x); }
+    { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "default_boot_choice"); if (_x && cJSON_IsNumber(_x)) out->default_boot_choice = _x->valueint; }
+    { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "bios_bg_color"); if (_x && cJSON_IsNumber(_x)) out->bios_bg_color = (uint32_t)_x->valuedouble; }
+    { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "bios_hl_color"); if (_x && cJSON_IsNumber(_x)) out->bios_hl_color = (uint32_t)_x->valuedouble; }
+    { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "bios_text_color"); if (_x && cJSON_IsNumber(_x)) out->bios_text_color = (uint32_t)_x->valuedouble; }
+    { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "bios_selection_style"); if (_x && cJSON_IsNumber(_x)) out->bios_selection_style = _x->valueint; }
 #undef GET_INT
 
     cJSON *hs = cJSON_GetObjectItemCaseSensitive(root, "high_scores");
@@ -431,6 +473,9 @@ void k85_set_sound_volume(int v) {
     g_config.sound_volume = v;
     k85_config_save();
 }
+
+
+
 
 
 

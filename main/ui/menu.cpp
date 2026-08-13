@@ -57,6 +57,24 @@ static int get_filtered_menu(const char *out[], int max_out) {
     return n;
 }
 
+static void draw_menu_background(uint32_t bg, uint32_t accent) {
+    if (!g_config.bg_gradient_enabled) {
+        M5.Display.fillScreen(bg);
+        return;
+    }
+    int h = M5.Display.height();
+    int w = M5.Display.width();
+    int tr = (bg >> 16) & 0xFF, tg = (bg >> 8) & 0xFF, tb = bg & 0xFF;
+    int br = (accent >> 16) & 0xFF, bg2 = (accent >> 8) & 0xFF, bb = accent & 0xFF;
+    for (int y = 0; y < h; y++) {
+        float t = ((float)y / (float)h) * 0.35f; // мягкий градиент, не перебивает читаемость текста
+        int r = tr + (int)((br - tr) * t);
+        int g = tg + (int)((bg2 - tg) * t);
+        int b = tb + (int)((bb - tb) * t);
+        M5.Display.drawFastHLine(0, y, w, ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b);
+    }
+}
+
 void k85_menu_init(void) {
     s_selected = 0;
     s_scroll_offset = 0;
@@ -73,7 +91,7 @@ void k85_menu_draw(void) {
     int h = M5.Display.height();
 
     if (count == 0) {
-        M5.Display.fillScreen(bg);
+        draw_menu_background(bg, accent);
         M5.Display.setTextSize(2);
         M5.Display.setTextColor(fg, bg);
         M5.Display.setCursor(10, h / 2 - 8);
@@ -85,7 +103,7 @@ void k85_menu_draw(void) {
     if (s_selected >= count) s_selected = count - 1;
     if (s_selected < 0) s_selected = 0;
 
-    M5.Display.fillScreen(bg);
+    draw_menu_background(bg, accent);
     M5.Display.setTextSize(2);
     const int line_h = 26;
     const int start_y = 14;
@@ -394,6 +412,8 @@ void k85_menu_activate(void) {
     run_action(s_selected);
     k85_menu_draw();
 }
+
+
 
 
 
