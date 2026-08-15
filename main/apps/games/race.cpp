@@ -1,4 +1,4 @@
-﻿#include "race.h"
+#include "race.h"
 #include "config.h"
 #include "theme.h"
 #include "battery.h"
@@ -14,15 +14,7 @@
 #include <cstdio>
 #include "esp_random.h"
 
-// TODO: в оригинальной MicroPython-прошивке k85OS игры "Race" не было -
-// это новая игра, спроектированная с нуля по аналогии с Snake/2048 (та же
-// схема управления и структура кода). Постоянный high score НЕ сохраняется:
-// в k85_high_scores_t (core/config.h) нет поля "race", а k85_set_high_score_if_better()
-// не знает такой игры. Варианты на выбор:
-//  1) добавить `int race;` в k85_high_scores_t + маппинг в config.cpp;
-//  2) оставить как есть - счёт виден только в рамках текущей игры.
-
-#define K85_RACE_LANES 3
+#define K85_RACE_LANES 2
 #define K85_RACE_MAX_ENEMIES 6
 
 struct K85RaceEnemy {
@@ -36,6 +28,28 @@ static int k85_race_rand_int(int n) {
     return (int)(esp_random() % (uint32_t)n);
 }
 
+// Рисует машинку: кузов + лобовое стекло + 4 колеса
+static void draw_car(int cx, int y, int w, int h, uint32_t body_color) {
+    int x = cx - w / 2;
+    uint32_t window_color = 0x88CCFF;
+    uint32_t wheel_color = 0x111111;
+
+    // Колёса (по бокам, чуть выступают за кузов)
+    int wheel_w = 3;
+    int wheel_h = h / 3;
+    M5.Display.fillRect(x - wheel_w + 1, y + 2, wheel_w, wheel_h, wheel_color);
+    M5.Display.fillRect(x + w - 1, y + 2, wheel_w, wheel_h, wheel_color);
+    M5.Display.fillRect(x - wheel_w + 1, y + h - wheel_h - 2, wheel_w, wheel_h, wheel_color);
+    M5.Display.fillRect(x + w - 1, y + h - wheel_h - 2, wheel_w, wheel_h, wheel_color);
+
+    // Кузов
+    M5.Display.fillRoundRect(x, y, w, h, 3, body_color);
+
+    // Лобовое стекло (полоска сверху кузова)
+    int win_h = h / 3;
+    M5.Display.fillRoundRect(x + 2, y + 2, w - 4, win_h, 2, window_color);
+}
+
 void k85_run_race(void) {
     int W = M5.Display.width();
     int H = M5.Display.height();
@@ -45,15 +59,15 @@ void k85_run_race(void) {
     const int road_margin = 10;
     const int road_w = W - road_margin * 2;
     const int lane_w = road_w / K85_RACE_LANES;
-    const int car_w = lane_w - 8;
-    const int car_h = 14;
-    const int player_y = H - 24;
+    const int car_w = lane_w - 12;
+    const int car_h = 16;
+    const int player_y = H - 26;
 
     auto lane_cx = [&](int lane) -> int {
         return road_margin + lane * lane_w + lane_w / 2;
     };
 
-    int player_lane = 1;
+    int player_lane = 0;
     K85RaceEnemy enemies[K85_RACE_MAX_ENEMIES];
     for (int i = 0; i < K85_RACE_MAX_ENEMIES; i++) enemies[i].active = false;
 
@@ -64,6 +78,8 @@ void k85_run_race(void) {
     bool game_over = false;
 
     uint32_t last_us = (uint32_t)esp_timer_get_time();
+
+    static const uint32_t enemy_colors[] = {0xFF3333, 0xFF9933, 0xCC33FF, 0xFFDD33};
 
     auto draw = [&](uint32_t score) {
         M5.Display.fillScreen(bg);
@@ -78,10 +94,10 @@ void k85_run_race(void) {
         for (int i = 0; i < K85_RACE_MAX_ENEMIES; i++) {
             if (!enemies[i].active) continue;
             int cx = lane_cx(enemies[i].lane);
-            M5.Display.fillRect(cx - car_w / 2, (int)enemies[i].y, car_w, car_h, 0xFF0000);
+            draw_car(cx, (int)enemies[i].y, car_w, car_h, enemy_colors[i % 4]);
         }
         int pcx = lane_cx(player_lane);
-        M5.Display.fillRect(pcx - car_w / 2, player_y, car_w, car_h, 0x00FF00);
+        draw_car(pcx, player_y, car_w, car_h, 0x33FF66);
 
         M5.Display.setTextSize(1);
         M5.Display.setTextColor(fg, bg);

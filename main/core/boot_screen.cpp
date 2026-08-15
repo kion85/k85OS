@@ -15,7 +15,7 @@
 #include <cstring>
 #include <cmath>
 
-#define K85_FW_VERSION "4.5"
+#define K85_FW_VERSION "4.7"
 #define K85_BOOT_DURATION_MS 4000
 #define K85_BOOT_MENU_TIMEOUT_MS 3000
 
@@ -297,5 +297,7 @@ void k85_show_boot_screen(void) {
         default: boot_static_text(title_y); break;
     }
 }
+
+
 
 

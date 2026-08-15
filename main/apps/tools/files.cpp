@@ -29,6 +29,54 @@ struct FbEntry {
     long size;
 };
 
+// Показывает первые байты файла: как текст (если похоже на текст) или hex-дамп.
+static bool looks_like_text(const unsigned char *buf, size_t len) {
+    for (size_t i = 0; i < len; i++) {
+        unsigned char c = buf[i];
+        if (c == 0 || (c < 9) || (c > 13 && c < 32)) return false;
+    }
+    return true;
+}
+
+static void preview_file(const char *full_path, const char *name, long size) {
+    unsigned char buf[64] = {0};
+    FILE *f = fopen(full_path, "rb");
+    size_t read_n = 0;
+    if (f) {
+        read_n = fread(buf, 1, sizeof(buf), f);
+        fclose(f);
+    }
+
+    char msg[300];
+    int used = snprintf(msg, sizeof(msg), "%.30s\nSize: %ldB\n\n", name, size);
+
+    if (read_n == 0) {
+        snprintf(msg + used, sizeof(msg) - used, "(empty or unreadable)\nA+B=back");
+    } else if (looks_like_text(buf, read_n)) {
+        int n = (int)read_n;
+        if (n > 80) n = 80;
+        char text_part[81];
+        memcpy(text_part, buf, n);
+        text_part[n] = 0;
+        snprintf(msg + used, sizeof(msg) - used, "%.80s\nA+B=back", text_part);
+    } else {
+        char hex[3 * 16 + 1] = {0};
+        int hn = 0;
+        int show = (int)read_n < 16 ? (int)read_n : 16;
+        for (int i = 0; i < show; i++) {
+            hn += snprintf(hex + hn, sizeof(hex) - hn, "%02X ", buf[i]);
+        }
+        snprintf(msg + used, sizeof(msg) - used, "hex: %s\nA+B=back", hex);
+    }
+    k85_show_message(msg);
+
+    while (true) {
+        k85_input_update();
+        if (k85_ab_held(500)) { k85_wait_ab_release(); break; }
+        vTaskDelay(pdMS_TO_TICKS(30));
+    }
+}
+
 static int fb_list_entries(const char *dir_path, FbEntry out[], int max_n) {
     DIR *d = opendir(dir_path);
     if (!d) return -1;
@@ -109,14 +157,7 @@ static void browse_dir(const char *root) {
         } else {
             char full_path[300];
             snprintf(full_path, sizeof(full_path), "%s/%s", current, entries[local_idx].name);
-            char msg[100];
-            snprintf(msg, sizeof(msg), "%.44s\nSize: %ldB\nA+B=back", entries[local_idx].name, entries[local_idx].size);
-            k85_show_message(msg);
-            while (true) {
-                k85_input_update();
-                if (k85_ab_held(500)) { k85_wait_ab_release(); break; }
-                vTaskDelay(pdMS_TO_TICKS(30));
-            }
+            preview_file(full_path, entries[local_idx].name, entries[local_idx].size);
         }
     }
 }
@@ -297,6 +338,11 @@ static void apply_bios_theme_picker(void) {
     if (fsrc) fclose(fsrc);
     if (fdst) fclose(fdst);
 
+    g_config.bios_bg_color = 0xFFFFFFFF;
+    g_config.bios_hl_color = 0xFFFFFFFF;
+    g_config.bios_text_color = 0xFFFFFFFF;
+    k85_config_save();
+
     char msg[64];
     snprintf(msg, sizeof(msg), "BIOS theme applied:\n%.35s\nA+B=back", names[idx]);
     k85_show_message(msg);
@@ -381,3 +427,5 @@ void k85_run_files(void) {
 }
 
 #pragma GCC diagnostic pop
+
+

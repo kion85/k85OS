@@ -1,4 +1,4 @@
-﻿#include "menu.h"
+#include "menu.h"
 #include "common.h"
 #include "theme.h"
 #include "battery.h"
@@ -18,6 +18,7 @@
 #include "rtc_ntp.h"
 #include "clock_menu.h"
 #include "../apps/wifi_menu.h"
+#include "../apps/apps_menu.h"
 #include "wifi.h"
 #include "M5Unified.h"
 
@@ -29,7 +30,7 @@
 
 static const char *const K85_MENU_ITEMS[] = {
     "Low tone", "High tone", "Both tones", "Cube", "Colors",
-    "Clock", "WiFi", "Store", "Tools", "Games", "Settings", "System info", "Logs", "Notifications",
+    "Clock", "WiFi", "Apps", "Tools", "Games", "Settings", "System info", "Logs", "Notifications",
 };
 #define K85_MENU_ITEM_COUNT (int)(sizeof(K85_MENU_ITEMS) / sizeof(K85_MENU_ITEMS[0]))
 
@@ -51,7 +52,7 @@ static int get_filtered_menu(const char *out[], int max_out) {
     bool balanced = !strcmp(mode, "Balanced");
     for (int i = 0; i < K85_MENU_ITEM_COUNT && n < max_out; i++) {
         const char *item = K85_MENU_ITEMS[i];
-        if (balanced && (!strcmp(item, "Cube") || !strcmp(item, "Store"))) continue;
+        if (balanced && !strcmp(item, "Cube")) continue;
         out[n++] = item;
     }
     return n;
@@ -67,7 +68,7 @@ static void draw_menu_background(uint32_t bg, uint32_t accent) {
     int tr = (bg >> 16) & 0xFF, tg = (bg >> 8) & 0xFF, tb = bg & 0xFF;
     int br = (accent >> 16) & 0xFF, bg2 = (accent >> 8) & 0xFF, bb = accent & 0xFF;
     for (int y = 0; y < h; y++) {
-        float t = ((float)y / (float)h) * 0.35f; // мягкий градиент, не перебивает читаемость текста
+        float t = ((float)y / (float)h) * 0.35f;
         int r = tr + (int)((br - tr) * t);
         int g = tg + (int)((bg2 - tg) * t);
         int b = tb + (int)((bb - tb) * t);
@@ -96,7 +97,7 @@ void k85_menu_draw(void) {
         M5.Display.setTextColor(fg, bg);
         M5.Display.setCursor(10, h / 2 - 8);
         M5.Display.print("No items");
-        k85_draw_battery_icon();
+        k85_status_bar_draw();
         return;
     }
 
@@ -148,7 +149,7 @@ void k85_menu_draw(void) {
         M5.Display.print("v");
     }
 
-    k85_draw_battery_icon();
+    k85_status_bar_draw();
 }
 
 void k85_menu_next(void) {
@@ -191,7 +192,6 @@ static const K85ColorEntry K85_COLORS[] = {
 
 static void draw_color_screen(int idx) {
     uint32_t val = K85_COLORS[idx].val;
-    // На белом фоне текст чёрный, на остальных — белый (как в оригинале)
     uint32_t txt_col = (val == 0xFFFFFF) ? 0x000000 : 0xFFFFFF;
 
     M5.Display.fillScreen(val);
@@ -296,58 +296,7 @@ static void run_cube(void) {
         vTaskDelay(pdMS_TO_TICKS(frame_delay_ms));
     }
 }
-// ---------- Clock ----------
-static void run_clock(void) {
-    if (!k85_is_ntp_synced()) {
-        if (k85_wifi_is_connected()) {
-            k85_ntp_sync_now();
-        }
-    }
 
-    uint32_t bg = k85_get_bg();
-    M5.Display.fillScreen(bg);
-    M5.Display.setTextSize(1);
-    M5.Display.setTextColor(k85_get_accent(), bg);
-    M5.Display.setCursor(10, 6);
-    M5.Display.printf("Clock [%s]", k85_is_ntp_synced() ? "NTP" : "NO NTP");
-
-    int scr_w = M5.Display.width();
-    int scr_h = M5.Display.height();
-    uint32_t elapsed_ms = 500; // форсируем первую отрисовку сразу
-
-    while (true) {
-        k85_input_update();
-
-        if (k85_ab_held(500)) {
-            k85_wait_ab_release();
-            return;
-        }
-
-        if (elapsed_ms >= 500) {
-            elapsed_ms = 0;
-
-            const char *t = k85_get_time_str();
-            M5.Display.setTextSize(3);
-            M5.Display.setTextColor(k85_get_fg(), k85_get_bg());
-            int approx_w = (int)strlen(t) * 18;
-            M5.Display.setCursor((scr_w - approx_w) / 2, scr_h / 2 - 16);
-            M5.Display.print(t);
-
-            if (k85_is_ntp_synced()) {
-                const char *d = k85_get_date_str();
-                M5.Display.setTextSize(1);
-                M5.Display.setTextColor(0x888888, k85_get_bg());
-                M5.Display.setCursor((scr_w - (int)strlen(d) * 6) / 2, scr_h / 2 + 8);
-                M5.Display.print(d);
-            }
-
-            k85_draw_battery_icon();
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(50));
-        elapsed_ms += 50;
-    }
-}
 static void run_placeholder(const char *name) {
     char buf[64];
     snprintf(buf, sizeof(buf), "%s\n(not implemented yet)\nA+B=back", name);
@@ -387,12 +336,12 @@ static void run_action(int index) {
         k85_run_clock_menu();
     } else if (!strcmp(item, "WiFi")) {
         k85_run_wifi_menu();
+    } else if (!strcmp(item, "Apps")) {
+        k85_run_apps_menu();
     } else if (!strcmp(item, "Games")) {
         k85_run_games_menu();
     } else if (!strcmp(item, "Colors")) {
         run_colors();
-    } else if (!strcmp(item, "Store")) {
-        k85_run_store();
     } else if (!strcmp(item, "Tools")) {
         k85_run_tools_menu();
     } else if (!strcmp(item, "System info")) {
@@ -412,16 +361,3 @@ void k85_menu_activate(void) {
     run_action(s_selected);
     k85_menu_draw();
 }
-
-
-
-
-
-
-
-
-
-
-
-
-

@@ -49,6 +49,8 @@
          "core/lock_auth.cpp"
          "ui/lock_screen_settings.cpp"
          "net/app_repo.cpp"
+         "apps/wifi_scanner.cpp"
+         "apps/apps_menu.cpp"
          "apps/k85os_menu.cpp"
          "apps/test_mode.cpp"
          "net/ota.cpp"
@@ -72,6 +74,8 @@ set_source_files_properties(
     "ble_hid/esp_hidd_prf_api.c"
     PROPERTIES COMPILE_OPTIONS "-Wno-unused-const-variable"
 )
+
+
 
 
 

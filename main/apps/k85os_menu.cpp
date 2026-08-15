@@ -1,4 +1,4 @@
-#include "k85os_menu.h"
+﻿#include "k85os_menu.h"
 #include "common.h"
 #include "theme.h"
 #include "battery.h"
@@ -278,6 +278,12 @@ static void run_update_uefi_theme(void) {
 
     s_bios_theme = k85_bios_theme_load();
 
+    // сбрасываем ручные overrides из Customization — иначе они перекрывают цвета новой темы
+    g_config.bios_bg_color = 0xFFFFFFFF;
+    g_config.bios_hl_color = 0xFFFFFFFF;
+    g_config.bios_text_color = 0xFFFFFFFF;
+    k85_config_save();
+
     char msg[80];
     snprintf(msg, sizeof(msg), "Applied: %.40s\nA+B=back", names[idx]);
     k85_show_message(msg);
@@ -325,12 +331,12 @@ static void run_customization_menu(void) {
             continue;
         }
 
-        // Циклический выбор: Default -> 10 цветов -> Default...
+        // Р¦РёРєР»РёС‡РµСЃРєРёР№ РІС‹Р±РѕСЂ: Default -> 10 С†РІРµС‚РѕРІ -> Default...
         uint32_t *target = (idx == 0) ? &g_config.bios_bg_color : (idx == 1) ? &g_config.bios_hl_color : &g_config.bios_text_color;
         int cur = color_preset_index(*target);
         cur++;
         if (cur >= 10) {
-            *target = 0xFFFFFFFF; // назад к дефолту
+            *target = 0xFFFFFFFF; // РЅР°Р·Р°Рґ Рє РґРµС„РѕР»С‚Сѓ
         } else {
             *target = K85_BIOS_COLOR_PRESETS[cur];
         }
@@ -348,7 +354,7 @@ static uint32_t darken(uint32_t color, int percent) {
     return ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
 }
 
-// Выбирает чёрный или белый текст в зависимости от яркости фона (контраст всегда читаем)
+// Р’С‹Р±РёСЂР°РµС‚ С‡С‘СЂРЅС‹Р№ РёР»Рё Р±РµР»С‹Р№ С‚РµРєСЃС‚ РІ Р·Р°РІРёСЃРёРјРѕСЃС‚Рё РѕС‚ СЏСЂРєРѕСЃС‚Рё С„РѕРЅР° (РєРѕРЅС‚СЂР°СЃС‚ РІСЃРµРіРґР° С‡РёС‚Р°РµРј)
 static uint32_t contrast_color(uint32_t bg_color) {
     int r = (bg_color >> 16) & 0xFF;
     int g = (bg_color >> 8) & 0xFF;
@@ -396,7 +402,7 @@ static void bios_draw(void) {
     uint32_t grad_top, grad_bottom;
     if (custom_bg) {
         grad_top = base_bg;
-        grad_bottom = base_bg; // сплошной цвет, без градиента
+        grad_bottom = base_bg; // СЃРїР»РѕС€РЅРѕР№ С†РІРµС‚, Р±РµР· РіСЂР°РґРёРµРЅС‚Р°
     } else {
         grad_top = darken(base_bg == 0x000000 ? 0x0000C0 : base_bg, 60);
         grad_bottom = (base_bg == 0x000000) ? 0x0000C0 : base_bg;
@@ -441,7 +447,7 @@ static void bios_draw(void) {
             item_fg = sel_text_color;
             item_bg = accent;
         } else if (sel && !filled_style) {
-            item_fg = accent; // выделение только цветом текста при "стрелочном" стиле
+            item_fg = accent; // РІС‹РґРµР»РµРЅРёРµ С‚РѕР»СЊРєРѕ С†РІРµС‚РѕРј С‚РµРєСЃС‚Р° РїСЂРё "СЃС‚СЂРµР»РѕС‡РЅРѕРј" СЃС‚РёР»Рµ
             item_bg = row_bg;
         } else {
             item_fg = danger ? 0xFF4444 : fg;

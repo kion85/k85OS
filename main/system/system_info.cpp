@@ -19,7 +19,7 @@
 #include <cstdio>
 
 #define K85_FW_NAME "k85OS"
-#define K85_FW_VERSION "v4.5"
+#define K85_FW_VERSION "v4.7"
 
 static temperature_sensor_handle_t s_temp_handle = nullptr;
 static bool s_temp_ready = false;
@@ -139,6 +139,8 @@ void k85_run_system_info(void) {
         vTaskDelay(pdMS_TO_TICKS(500));
     }
 }
+
+
 
 
 
