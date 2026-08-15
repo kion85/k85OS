@@ -9,6 +9,20 @@ Originally ported from an earlier MicroPython/UIFlow prototype into a modular ES
 
 ESP32-S3 (tested on ESP32-S3-PICO-1-N8R8, 8MB Flash + 8MB Octal PSRAM)
 
+№№ Theme
+Инструкция: как писать .thm-файлы для UEFI/BIOS
+
+Формат - одна строка текста, поля через | (вертикальная черта):
+
+Имя|Фон|Текст|Акцент|Тёмная|Иконка
+#	Что	Формат	Пример
+1	Имя темы	текст, до 23 симв.	MyUEFI
+2	Цвет фона (верх градиента)	HEX без #	000040
+3	Цвет обычного текста	HEX без #	FFFFFF
+4	Цвет подсветки выбранного пункта	HEX без #	4444FF
+5	Тёмная тема	1 или 0	1
+6	Иконка батареи	bar или bolt	bolt
+
 ## Features
 
 **Store (games)**
