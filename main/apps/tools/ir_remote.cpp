@@ -4,6 +4,7 @@
 #include "battery.h"
 #include "input.h"
 #include "text_input.h"
+#include "esp_log.h"
 #include "list_menu.h"
 #include "sound.h"
 
@@ -92,7 +93,11 @@ static void start_rmt_receive(void) {
     rmt_receive_config_t cfg = {};
     cfg.signal_range_min_ns = 1000;
     cfg.signal_range_max_ns = 20000000;
-    rmt_receive(s_rx_chan, s_rx_symbols, sizeof(s_rx_symbols), &cfg);
+    esp_err_t err = rmt_receive(s_rx_chan, s_rx_symbols, sizeof(s_rx_symbols), &cfg);
+    if (err != ESP_OK) {
+        // канал ещё не вернулся в ENABLE после предыдущего приёма (шум/гонка) —
+        // просто пропускаем этот цикл, следующая попытка будет через vTaskDelay
+    }
 }
 
 static bool ir_rmt_init(void) {
@@ -423,6 +428,11 @@ static void run_ir_learn(void) {
 
         if (s_rx_done) {
             s_rx_done = false;
+            ESP_LOGI("k85_ir", "RX got %d symbols", (int)s_rx_symbol_num);
+            for (size_t i = 0; i < s_rx_symbol_num && i < 8; i++) {
+                ESP_LOGI("k85_ir", "  [%d] mark=%u space=%u", (int)i,
+                         (unsigned)s_rx_symbols[i].duration0, (unsigned)s_rx_symbols[i].duration1);
+            }
             if (decode_nec(s_rx_symbols, &decoded_raw)) {
                 got = true;
                 break;
@@ -474,6 +484,70 @@ static void run_ir_delete(void) {
     wait_ab_exit();
 }
 
+
+// ---------- UI: Edit ----------
+static bool run_ir_edit_code(K85IrCode *code) {
+    char name[16];
+    snprintf(name, sizeof(name), "%s", code->name);
+    if (!k85_text_input("Name:", name, name, sizeof(name))) return false;
+    if (strlen(name) == 0) return false;
+
+    char addr_str[8];
+    snprintf(addr_str, sizeof(addr_str), "%04X", code->address);
+    if (!k85_text_input("Address (hex):", addr_str, addr_str, sizeof(addr_str))) return false;
+
+    char cmd_str[8];
+    snprintf(cmd_str, sizeof(cmd_str), "%02X", code->command);
+    if (!k85_text_input("Command (hex):", cmd_str, cmd_str, sizeof(cmd_str))) return false;
+
+    snprintf(code->name, sizeof(code->name), "%s", name);
+    code->address = (uint16_t)strtoul(addr_str, nullptr, 16);
+    code->command = (uint8_t)strtoul(cmd_str, nullptr, 16);
+    return true;
+}
+
+// ---------- UI: Saved signals (Send/Edit/Delete) ----------
+static void run_ir_saved_signals(void) {
+    while (true) {
+        K85IrCode codes[K85_IR_MAX_CODES];
+        int n = load_codes(codes, K85_IR_MAX_CODES);
+        if (n == 0) {
+            k85_show_message("No saved codes\nA+B=back");
+            wait_ab_exit();
+            return;
+        }
+        const char *names[K85_IR_MAX_CODES];
+        for (int i = 0; i < n; i++) names[i] = codes[i].name;
+
+        int idx = k85_run_list_menu("SAVED SIGNALS", names, n, nullptr);
+        if (idx < 0) return;
+
+        static const char *actions[] = {"Send", "Edit", "Delete", "Back"};
+        int act = k85_run_list_menu(codes[idx].name, actions, 4, nullptr);
+        if (act < 0 || act == 3) continue;
+
+        if (act == 0) {
+            bool ok = send_nec(codes[idx].address, codes[idx].command);
+            char msg[80];
+            snprintf(msg, sizeof(msg), "NEC A:%04X C:%02X\n%s\nA+B=back",
+                     codes[idx].address, codes[idx].command, ok ? "Sent" : "Send failed");
+            k85_show_message(msg);
+            wait_ab_exit();
+        } else if (act == 1) {
+            if (run_ir_edit_code(&codes[idx])) {
+                save_codes(codes, n);
+                k85_show_message("Saved\nA+B=back");
+                wait_ab_exit();
+            }
+        } else if (act == 2) {
+            for (int i = idx; i < n - 1; i++) codes[i] = codes[i + 1];
+            n--;
+            save_codes(codes, n);
+            k85_show_message("Deleted\nA+B=back");
+            wait_ab_exit();
+        }
+    }
+}
 void k85_run_ir_remote(void) {
     if (!ir_rmt_init()) {
         k85_show_message("IR init failed");
@@ -483,20 +557,23 @@ void k85_run_ir_remote(void) {
 
     M5.Speaker.end();
 
-    static const char *items[] = {"Send", "Learn new", "Delete", "TV Brand Power", "Blast all (TV-B-Gone)", "Back"};
+    static const char *items[] = {"Saved Signals", "Learn new (receive)", "TV Brand Power", "Blast all (TV-B-Gone)", "Back"};
     while (true) {
-        int idx = k85_run_list_menu("IR REMOTE", items, 6, nullptr);
-        if (idx < 0 || idx == 5) break;
-        if (idx == 0) run_ir_send();
+        int idx = k85_run_list_menu("IR REMOTE", items, 5, nullptr);
+        if (idx < 0 || idx == 4) break;
+        if (idx == 0) run_ir_saved_signals();
         else if (idx == 1) run_ir_learn();
-        else if (idx == 2) run_ir_delete();
-        else if (idx == 3) run_ir_brand_codes();
-        else if (idx == 4) run_ir_blast_all();
+        else if (idx == 2) run_ir_brand_codes();
+        else if (idx == 3) run_ir_blast_all();
     }
 
     M5.Speaker.begin();
     k85_apply_sound_volume();
 }
+
+
+
+
 
 
 

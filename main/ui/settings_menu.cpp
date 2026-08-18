@@ -15,6 +15,7 @@
 #include "status_bar_settings.h"
 #include "lock_screen_settings.h"
 #include "../core/lock_auth.h"
+#include "../net/ssh_server.h"
 
 #include "M5Unified.h"
 #include "freertos/FreeRTOS.h"
@@ -23,13 +24,13 @@
 #include <cstdio>
 #include <cstddef>
 
-#define K85_SETTINGS_ITEM_COUNT 14
+#define K85_SETTINGS_ITEM_COUNT 15
 #define K85_SETTINGS_BACK_IDX   (K85_SETTINGS_ITEM_COUNT - 1)
 
 static const char *k85_settings_labels[K85_SETTINGS_ITEM_COUNT] = {
     "Theme", "Brightness", "Battery mode", "Boot style",
     "Device name", "Sound volume", "WiFi", "Reset steps",
-    "Check for updates", "Screen lock", "Status bar", "BG gradient", "Lock screen", "Back",
+    "Check for updates", "Screen lock", "Status bar", "BG gradient", "Lock screen", "SSH Server", "Back",
 };
 
 static int s_selected = 0;
@@ -68,7 +69,8 @@ static void settings_value_str(char *out, size_t out_size, int idx) {
         case 10: out[0] = 0; break;
         case 11: snprintf(out, out_size, "%s", g_config.bg_gradient_enabled ? "ON" : "OFF"); break;
         case 12: out[0] = 0; break;
-        case 13: out[0] = 0; break; // Back - без значения
+        case 13: snprintf(out, out_size, "%s", g_config.ssh_enabled ? "ON" : "OFF"); break;
+        case 14: out[0] = 0; break; // Back - без значения
         default: out[0] = 0;
     }
 }
@@ -278,6 +280,52 @@ static void settings_apply_item(int idx) {
         case 12:
             k85_run_lock_screen_settings();
             break;
+        case 13: {
+            if (g_config.ssh_enabled) {
+                k85_show_message("Disable SSH server?\nB=confirm A+B=cancel");
+                bool confirmed = false;
+                while (true) {
+                    k85_input_update();
+                    if (k85_ab_held(500)) { k85_wait_ab_release(); goto ssh_done; }
+                    if (k85_btn_b_pressed()) { confirmed = true; break; }
+                    vTaskDelay(pdMS_TO_TICKS(30));
+                }
+                if (confirmed) {
+                    k85_ssh_server_stop();
+                    g_config.ssh_enabled = false;
+                    k85_show_message("SSH server disabled\nA+B=back");
+                    while (true) {
+                        k85_input_update();
+                        if (k85_ab_held(500)) { k85_wait_ab_release(); break; }
+                        vTaskDelay(pdMS_TO_TICKS(30));
+                    }
+                }
+            } else {
+                char user[32] = "";
+                if (!k85_text_input("SSH username:", g_config.ssh_username, user, sizeof(user)) || !user[0]) break;
+
+                char pass[64] = "";
+                if (!k85_text_input("SSH password:", "", pass, sizeof(pass)) || !pass[0]) break;
+
+                snprintf(g_config.ssh_username, sizeof(g_config.ssh_username), "%s", user);
+                k85_ssh_hash_password(pass, g_config.ssh_password_hash);
+                g_config.ssh_enabled = true;
+                k85_config_save();
+
+                if (k85_ssh_server_start()) {
+                    k85_show_message("SSH server started\nA+B=back");
+                } else {
+                    k85_show_message("SSH start failed\n(need WiFi saved)\nA+B=back");
+                }
+                while (true) {
+                    k85_input_update();
+                    if (k85_ab_held(500)) { k85_wait_ab_release(); break; }
+                    vTaskDelay(pdMS_TO_TICKS(30));
+                }
+            }
+            ssh_done:
+            break;
+        }
         default:
             break;
     }
@@ -314,6 +362,7 @@ void k85_run_settings_menu(void) {
         vTaskDelay(pdMS_TO_TICKS(30));
     }
 }
+
 
 
 

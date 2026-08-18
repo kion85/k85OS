@@ -1,4 +1,4 @@
-﻿idf_component_register(
+idf_component_register(
     SRCS "k85os_idf.cpp"
          "core/config.cpp"
          "core/theme.cpp"
@@ -11,6 +11,7 @@
          "core/device.cpp"
          "core/boot_screen.cpp"
          "core/notifications.cpp"
+         "core/profiles.cpp"
          "ui/common.cpp"
          "ui/menu.cpp"
          "ui/lock_screen.cpp"
@@ -34,6 +35,7 @@
          "apps/tools/air_mouse.cpp"
          "apps/tools/files.cpp"
          "apps/tools/music_player.cpp"
+         "apps/tools/mp3_decode.cpp"
          "apps/tools/mic_test.cpp"
          "apps/tools/wifi_hotspot.cpp"
          "apps/tools/bt_scan.cpp"
@@ -51,6 +53,10 @@
          "net/app_repo.cpp"
          "apps/wifi_scanner.cpp"
          "apps/apps_menu.cpp"
+         "apps/router_menu.cpp"
+         "net/firmware_flash.cpp"
+         "net/router.cpp"
+         "net/ssh_server.cpp"
          "apps/k85os_menu.cpp"
          "apps/test_mode.cpp"
          "net/ota.cpp"
@@ -65,7 +71,7 @@
          "ble_hid/esp_hidd_prf_api.c"
          "ble_hid/air_mouse_ble.cpp"
     INCLUDE_DIRS "." "core" "ui" "steps" "system" "net" "apps" "apps/games" "apps/tools" "ble_hid"
-    PRIV_REQUIRES json esp_netif esp_driver_tsens esp_wifi nvs_flash esp_event esp_driver_i2c esp_driver_gpio bt esp_driver_rmt esp_https_ota esp_http_client app_update mbedtls
+    PRIV_REQUIRES json esp_netif esp_driver_tsens esp_wifi nvs_flash esp_event esp_driver_i2c esp_driver_gpio bt esp_driver_rmt esp_https_ota esp_http_client app_update mbedtls esp-libhelix-mp3 mbedtls wolfssl wolfssh esp_psram
 )
 
 set_source_files_properties(
@@ -74,6 +80,14 @@ set_source_files_properties(
     "ble_hid/esp_hidd_prf_api.c"
     PROPERTIES COMPILE_OPTIONS "-Wno-unused-const-variable"
 )
+
+
+
+
+
+
+
+
 
 
 

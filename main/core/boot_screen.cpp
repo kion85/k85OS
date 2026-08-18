@@ -8,6 +8,7 @@
 
 #include "M5Unified.h"
 #include "esp_timer.h"
+#include "esp_ota_ops.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -15,7 +16,7 @@
 #include <cstring>
 #include <cmath>
 
-#define K85_FW_VERSION "4.7"
+#define K85_FW_VERSION "5.0"
 #define K85_BOOT_DURATION_MS 4000
 #define K85_BOOT_MENU_TIMEOUT_MS 3000
 
@@ -126,38 +127,25 @@ static void boot_static_text(int title_y) {
     vTaskDelay(pdMS_TO_TICKS(K85_BOOT_DURATION_MS));
 }
 
-// ---------- Логотип: чиби-капибара с долькой апельсина (векторная отрисовка) ----------
+// ---------- Р›РѕРіРѕС‚РёРї: С‡РёР±Рё-РєР°РїРёР±Р°СЂР° ----------
 static void draw_capybara_logo(int cx, int cy) {
-    // Палитра фиксированная (не завязана на тему — маскот всегда узнаваем)
     uint32_t body_col   = 0x8B6F47;
     uint32_t muzzle_col = 0xE8D5B0;
     uint32_t dark_col   = 0x3A2E20;
     uint32_t orange_col = 0xFFA500;
     uint32_t orange_seg = 0xFFF3D6;
 
-    // Туловище (широкий овал снизу)
     M5.Display.fillRoundRect(cx - 32, cy + 6, 64, 30, 14, body_col);
-
-    // Голова (большой круг)
     M5.Display.fillCircle(cx, cy - 6, 26, body_col);
-
-    // Уши (два маленьких кружка сверху)
     M5.Display.fillCircle(cx - 16, cy - 26, 7, body_col);
     M5.Display.fillCircle(cx + 16, cy - 26, 7, body_col);
     M5.Display.fillCircle(cx - 16, cy - 26, 4, dark_col);
     M5.Display.fillCircle(cx + 16, cy - 26, 4, dark_col);
-
-    // Мордочка (светлое пятно снизу головы)
     M5.Display.fillRoundRect(cx - 16, cy - 2, 32, 18, 8, muzzle_col);
-
-    // Глаза (сонный полузакрытый взгляд — тонкие горизонтальные штрихи)
     M5.Display.fillRoundRect(cx - 12, cy - 8, 6, 3, 1, dark_col);
     M5.Display.fillRoundRect(cx + 6,  cy - 8, 6, 3, 1, dark_col);
-
-    // Нос (маленькая трапеция)
     M5.Display.fillTriangle(cx - 4, cy + 2, cx + 4, cy + 2, cx, cy + 7, dark_col);
 
-    // Долька апельсина на макушке
     int ox = cx, oy = cy - 34;
     M5.Display.fillCircle(ox, oy, 10, orange_col);
     for (int i = -2; i <= 2; i++) {
@@ -166,7 +154,6 @@ static void draw_capybara_logo(int cx, int cy) {
     M5.Display.drawCircle(ox, oy, 10, orange_seg);
 }
 
-// Показывает статичный логотип на K85_LOGO_DURATION_MS перед появлением GRUB-меню.
 #define K85_LOGO_DURATION_MS 1000
 static void show_pre_boot_logo(const K85BootTheme &theme) {
     int W = M5.Display.width();
@@ -186,7 +173,8 @@ static void show_pre_boot_logo(const K85BootTheme &theme) {
 }
 
 // ---------- GRUB-style boot menu ----------
-enum BootChoice { BOOT_NORMAL = 0, BOOT_BIOS = 1, BOOT_TEST = 2 };
+enum BootChoice { BOOT_NORMAL = 0, BOOT_BIOS = 1, BOOT_TEST = 2, BOOT_ALT_FW = 3 };
+#define K85_BOOT_MENU_ITEM_COUNT 4
 
 static void draw_boot_menu(int selected, int seconds_left) {
     uint32_t bg = s_boot_theme.bg;
@@ -199,10 +187,12 @@ static void draw_boot_menu(int selected, int seconds_left) {
     M5.Display.setCursor(10, 10);
     M5.Display.print("k85OS Boot Menu");
 
-    static const char *items[] = {"k85OS (normal)", "k85os-menu (BIOS)", "Test Mode"};
-    int y = 50;
+    static const char *items[K85_BOOT_MENU_ITEM_COUNT] = {
+        "k85OS (normal)", "k85os-menu (BIOS)", "Test Mode", "Alt Firmware"
+    };
+    int y = 42;
     int w = M5.Display.width();
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < K85_BOOT_MENU_ITEM_COUNT; i++) {
         bool sel = (i == selected);
         if (sel) {
             M5.Display.fillRect(2, y - 2, w - 4, 13, accent);
@@ -224,9 +214,6 @@ static void draw_boot_menu(int selected, int seconds_left) {
     }
 }
 
-// РџРѕРєР°Р·С‹РІР°РµС‚ GRUB-РїРѕРґРѕР±РЅРѕРµ РјРµРЅСЋ РЅР° K85_BOOT_MENU_TIMEOUT_MS.
-// Р•СЃР»Рё РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРёС‡РµРіРѕ РЅРµ РЅР°Р¶Р°Р» вЂ” РѕР±С‹С‡РЅР°СЏ Р·Р°РіСЂСѓР·РєР°. Р•СЃР»Рё РЅР°Р¶Р°Р» A вЂ”
-// С‚Р°Р№РјРµСЂ РѕС‚РјРµРЅСЏРµС‚СЃСЏ, РґР°Р»СЊС€Рµ СЃРІРѕР±РѕРґРЅР°СЏ РЅР°РІРёРіР°С†РёСЏ.
 static BootChoice run_boot_menu(void) {
     int selected = 0;
     bool interacted = false;
@@ -247,7 +234,7 @@ static BootChoice run_boot_menu(void) {
 
         if (k85_btn_a_pressed()) {
             interacted = true;
-            selected = (selected + 1) % 3;
+            selected = (selected + 1) % K85_BOOT_MENU_ITEM_COUNT;
             draw_boot_menu(selected, 0);
             last_seconds_shown = 0;
         }
@@ -273,7 +260,7 @@ void k85_show_boot_screen(void) {
         choice = run_boot_menu();
     } else {
         int c = g_config.default_boot_choice;
-        if (c < 0 || c > 2) c = 0;
+        if (c < 0 || c > 3) c = 0;
         choice = (BootChoice)c;
     }
 
@@ -284,6 +271,14 @@ void k85_show_boot_screen(void) {
     if (choice == BOOT_TEST) {
         k85_run_test_mode();
         return;
+    }
+    if (choice == BOOT_ALT_FW) {
+        const esp_partition_t *alt = esp_ota_get_next_update_partition(nullptr);
+        if (alt) {
+            esp_ota_set_boot_partition(alt);
+            esp_restart();
+        }
+        // РµСЃР»Рё СЃРІРѕР±РѕРґРЅРѕРіРѕ СЃР»РѕС‚Р° РЅРµС‚/РїСѓСЃС‚ вЂ” РїР°РґР°РµРј РІ РѕР±С‹С‡РЅСѓСЋ Р·Р°РіСЂСѓР·РєСѓ РЅРёР¶Рµ
     }
 
     int title_y = boot_draw_title();
@@ -297,7 +292,3 @@ void k85_show_boot_screen(void) {
         default: boot_static_text(title_y); break;
     }
 }
-
-
-
-

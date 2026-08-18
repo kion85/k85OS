@@ -4,6 +4,7 @@
 #include "core/theme.h"
 #include "core/input.h"
 #include "core/sound.h"
+#include "core/profiles.h"
 #include "net/wifi.h"
 #include "ui/common.h"
 #include "esp_timer.h"
@@ -11,7 +12,7 @@
 #include "freertos/task.h"
 #include <cstdio>
 
-#define K85_QS_ITEM_COUNT 6
+#define K85_QS_ITEM_COUNT 7
 
 enum {
     QS_BRIGHTNESS = 0,
@@ -19,6 +20,7 @@ enum {
     QS_BLUETOOTH,
     QS_FLASHLIGHT,
     QS_SOUND,
+    QS_PROFILE,
     QS_BACK,
 };
 
@@ -87,6 +89,11 @@ static void qs_toggle_sound(void) {
     }
 }
 
+static void qs_cycle_profile(void) {
+    int next = (g_config.active_profile_idx + 1) % K85_MAX_PROFILES;
+    k85_profile_apply(next);
+}
+
 static void qs_activate_selected(void) {
     switch (s_qs_selected) {
         case QS_BRIGHTNESS: qs_cycle_brightness(); break;
@@ -94,6 +101,7 @@ static void qs_activate_selected(void) {
         case QS_BLUETOOTH:  /* индикатор, без действия */ break;
         case QS_FLASHLIGHT: qs_run_flashlight();   break;
         case QS_SOUND:      qs_toggle_sound();     break;
+        case QS_PROFILE:    qs_cycle_profile();     break;
         case QS_BACK:       break; // обрабатывается отдельно в k85_quick_settings_open
     }
 }
@@ -138,6 +146,9 @@ static void qs_draw(void) {
             case QS_SOUND:
                 snprintf(line, sizeof(line), "Sound: %s", s_muted_prev_volume >= 0 ? "Muted" : "On");
                 break;
+            case QS_PROFILE:
+                snprintf(line, sizeof(line), "Profile: %s", g_config.profiles[g_config.active_profile_idx].name);
+                break;
             case QS_BACK:
                 snprintf(line, sizeof(line), "Back");
                 break;
@@ -175,4 +186,5 @@ void k85_quick_settings_open(void) {
         vTaskDelay(pdMS_TO_TICKS(30));
     }
 }
+
 

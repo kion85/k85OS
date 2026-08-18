@@ -1,4 +1,5 @@
 ﻿#include "config.h"
+#include "core/profiles.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -79,6 +80,13 @@ void k85_config_defaults(k85_config_t *cfg) {
     cfg->bios_selection_style = 0;
     cfg->wifi_saved       = false;
     cfg->wifi_networks_count = 0;
+
+    cfg->ssh_enabled = false;
+    cfg->ssh_username[0] = 0;
+    cfg->ssh_password_hash[0] = 0;
+
+    k85_profiles_defaults(cfg->profiles);
+    cfg->active_profile_idx = 0;
     // high_scores, step_count, step_record, step_date вЂ” СѓР¶Рµ 0/""
 }
 
@@ -256,6 +264,27 @@ static cJSON *cfg_to_json(const k85_config_t *c) {
     }
     cJSON_AddItemToObject(root, "wifi_networks", nets);
 
+    cJSON *profs = cJSON_CreateArray();
+    for (int i = 0; i < K85_MAX_PROFILES; i++) {
+        cJSON *pel = cJSON_CreateObject();
+        cJSON_AddStringToObject(pel, "name", c->profiles[i].name);
+        cJSON_AddNumberToObject(pel, "theme_idx", c->profiles[i].theme_idx);
+        cJSON_AddNumberToObject(pel, "brightness_active", c->profiles[i].brightness_active);
+        cJSON_AddNumberToObject(pel, "sound_volume", c->profiles[i].sound_volume);
+        cJSON_AddBoolToObject(pel, "sound_muted", c->profiles[i].sound_muted);
+        cJSON_AddNumberToObject(pel, "battery_mode_idx", c->profiles[i].battery_mode_idx);
+        cJSON_AddNumberToObject(pel, "bootstyle_idx", c->profiles[i].bootstyle_idx);
+        cJSON_AddBoolToObject(pel, "bg_gradient_enabled", c->profiles[i].bg_gradient_enabled);
+        cJSON_AddStringToObject(pel, "wifi_ssid", c->profiles[i].wifi_ssid);
+        cJSON_AddItemToArray(profs, pel);
+    }
+    cJSON_AddItemToObject(root, "profiles", profs);
+    cJSON_AddNumberToObject(root, "active_profile_idx", c->active_profile_idx);
+
+    cJSON_AddBoolToObject(root, "ssh_enabled", c->ssh_enabled);
+    cJSON_AddStringToObject(root, "ssh_username", c->ssh_username);
+    cJSON_AddStringToObject(root, "ssh_password_hash", c->ssh_password_hash);
+
     cJSON_AddNumberToObject(root, "step_count", c->step_count);
     cJSON_AddNumberToObject(root, "step_record", c->step_record);
     cJSON_AddStringToObject(root, "step_date", c->step_date);
@@ -341,6 +370,31 @@ static void cfg_from_json(cJSON *root, k85_config_t *out) {
             out->wifi_networks_count++;
         }
     }
+
+    cJSON *profs = cJSON_GetObjectItemCaseSensitive(root, "profiles");
+    if (profs && cJSON_IsArray(profs)) {
+        int n = cJSON_GetArraySize(profs);
+        for (int i = 0; i < n && i < K85_MAX_PROFILES; i++) {
+            cJSON *pel = cJSON_GetArrayItem(profs, i);
+            if (!pel || !cJSON_IsObject(pel)) continue;
+            k85_profile_t *p = &out->profiles[i];
+            cJSON *x;
+            if ((x = cJSON_GetObjectItemCaseSensitive(pel, "name")) && cJSON_IsString(x)) set_str(p->name, sizeof(p->name), x->valuestring);
+            if ((x = cJSON_GetObjectItemCaseSensitive(pel, "theme_idx")) && cJSON_IsNumber(x)) p->theme_idx = x->valueint;
+            if ((x = cJSON_GetObjectItemCaseSensitive(pel, "brightness_active")) && cJSON_IsNumber(x)) p->brightness_active = x->valueint;
+            if ((x = cJSON_GetObjectItemCaseSensitive(pel, "sound_volume")) && cJSON_IsNumber(x)) p->sound_volume = x->valueint;
+            if ((x = cJSON_GetObjectItemCaseSensitive(pel, "sound_muted"))) p->sound_muted = cJSON_IsTrue(x);
+            if ((x = cJSON_GetObjectItemCaseSensitive(pel, "battery_mode_idx")) && cJSON_IsNumber(x)) p->battery_mode_idx = x->valueint;
+            if ((x = cJSON_GetObjectItemCaseSensitive(pel, "bootstyle_idx")) && cJSON_IsNumber(x)) p->bootstyle_idx = x->valueint;
+            if ((x = cJSON_GetObjectItemCaseSensitive(pel, "bg_gradient_enabled"))) p->bg_gradient_enabled = cJSON_IsTrue(x);
+            if ((x = cJSON_GetObjectItemCaseSensitive(pel, "wifi_ssid")) && cJSON_IsString(x)) set_str(p->wifi_ssid, sizeof(p->wifi_ssid), x->valuestring);
+        }
+    }
+    { cJSON *x = cJSON_GetObjectItemCaseSensitive(root, "active_profile_idx"); if (x && cJSON_IsNumber(x)) out->active_profile_idx = x->valueint; }
+
+    { cJSON *x = cJSON_GetObjectItemCaseSensitive(root, "ssh_enabled"); if (x) out->ssh_enabled = cJSON_IsTrue(x); }
+    { cJSON *x = cJSON_GetObjectItemCaseSensitive(root, "ssh_username"); if (x && cJSON_IsString(x)) set_str(out->ssh_username, sizeof(out->ssh_username), x->valuestring); }
+    { cJSON *x = cJSON_GetObjectItemCaseSensitive(root, "ssh_password_hash"); if (x && cJSON_IsString(x)) set_str(out->ssh_password_hash, sizeof(out->ssh_password_hash), x->valuestring); }
 
     cJSON *sc = cJSON_GetObjectItemCaseSensitive(root, "step_count");
     if (sc && cJSON_IsNumber(sc)) out->step_count = sc->valueint;
@@ -473,6 +527,8 @@ void k85_set_sound_volume(int v) {
     g_config.sound_volume = v;
     k85_config_save();
 }
+
+
 
 
 

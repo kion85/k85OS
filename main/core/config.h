@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "core/profiles.h"
 
 // ---------- LittleFS ----------
 #define K85_LITTLEFS_PART_LABEL "storage"
@@ -74,6 +75,14 @@ typedef struct {
     int step_count;
     int step_record;
     char step_date[16];
+
+    // SSH server
+    bool ssh_enabled;
+    char ssh_username[32];
+    char ssh_password_hash[65]; // hex SHA-256
+    // Profiles (Home/Work/Eco)
+    k85_profile_t profiles[K85_MAX_PROFILES];
+    int active_profile_idx;
 } k85_config_t;
 
 extern k85_config_t g_config;
@@ -91,6 +100,9 @@ bool k85_set_low_score_if_better(const char *game, int value);
 
 int  k85_get_sound_volume(void);
 void k85_set_sound_volume(int v);
+
+
+
 
 
 

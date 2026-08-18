@@ -1,4 +1,4 @@
-﻿#include "music_player.h"
+#include "music_player.h"
 #include "common.h"
 #include "theme.h"
 #include "list_menu.h"
@@ -7,6 +7,9 @@
 #include "log.h"
 #include "sound.h"
 #include "config.h"
+#include "mp3_decode.h"
+
+static void play_mp3_file(const char *path);
 
 #include "M5Unified.h"
 #include "esp_timer.h"
@@ -35,6 +38,11 @@ static bool entry_is_wav(const char *name) {
     return len > 4 && !strcasecmp(name + len - 4, ".wav");
 }
 
+static bool entry_is_mp3(const char *name) {
+    size_t len = strlen(name);
+    return len > 4 && !strcasecmp(name + len - 4, ".mp3");
+}
+
 static int list_dir_entries(const char *dir_path, MpEntry out[], int max_n) {
     DIR *d = opendir(dir_path);
     if (!d) return 0;
@@ -50,7 +58,7 @@ static int list_dir_entries(const char *dir_path, MpEntry out[], int max_n) {
         if (stat(full, &st) != 0) continue;
 
         bool is_dir = S_ISDIR(st.st_mode);
-        if (!is_dir && !entry_is_wav(ent->d_name)) continue;
+        if (!is_dir && !entry_is_wav(ent->d_name) && !entry_is_mp3(ent->d_name)) continue;
 
         snprintf(out[n].name, sizeof(out[n].name), "%.60s", ent->d_name);
         out[n].is_dir = is_dir;
@@ -113,7 +121,7 @@ static bool browse_for_wav(char *out_path, size_t out_size, const char *root) {
     }
 }
 
-// ---------- Р Р°Р·Р±РѕСЂ WAV-Р·Р°РіРѕР»РѕРІРєР° (RIFF chunks) ----------
+// ---------- ???????????? WAV-?????????????????? (RIFF chunks) ----------
 struct WavInfo {
     uint32_t sample_rate;
     uint16_t channels;
@@ -163,7 +171,7 @@ static bool parse_wav(const uint8_t *data, size_t size, WavInfo &info) {
     return have_fmt && have_data;
 }
 
-// ---------- Р­РєСЂР°РЅ РІРѕСЃРїСЂРѕРёР·РІРµРґРµРЅРёСЏ СЃ РёРєРѕРЅРєР°РјРё СѓРїСЂР°РІР»РµРЅРёСЏ ----------
+// ---------- ?????????? ?????????????????????????????? ?? ???????????????? ???????????????????? ----------
 enum PlayerControl { CTRL_VOL_DOWN = 0, CTRL_BACK10 = 1, CTRL_PLAYPAUSE = 2, CTRL_FWD10 = 3, CTRL_VOL_UP = 4 };
 
 static void draw_player_screen(const char *fname, const WavInfo &wav, size_t position,
@@ -196,7 +204,7 @@ static void draw_player_screen(const char *fname, const WavInfo &wav, size_t pos
     M5.Display.setCursor(6, 36);
     M5.Display.print(time_str);
 
-    // РџСЂРѕРіСЂРµСЃСЃ-Р±Р°СЂ
+    // ????????????????-??????
     int bar_x = 6, bar_y = 50, bar_w = w - 12, bar_h = 6;
     M5.Display.drawRect(bar_x, bar_y, bar_w, bar_h, 0x555555);
     float progress = total_sec > 0 ? (float)(cur_sec / total_sec) : 0;
@@ -204,12 +212,27 @@ static void draw_player_screen(const char *fname, const WavInfo &wav, size_t pos
     if (progress > 1) progress = 1;
     M5.Display.fillRect(bar_x + 1, bar_y + 1, (int)((bar_w - 2) * progress), bar_h - 2, accent);
 
-    // РРєРѕРЅРєРё СѓРїСЂР°РІР»РµРЅРёСЏ: -10 | play/pause | +10
+    // Vol readout
+    uint32_t col_vol = (selected == CTRL_VOL_DOWN || selected == CTRL_VOL_UP) ? accent : fg;
+    char vol_str[24];
+    snprintf(vol_str, sizeof(vol_str), "Vol: %d%%", k85_get_sound_volume());
+    int vol_w = (int)strlen(vol_str) * 6 + 8;
+    int vol_x = (w - vol_w) / 2;
+    if (selected == CTRL_VOL_DOWN || selected == CTRL_VOL_UP) {
+        M5.Display.fillRect(vol_x - 4, bar_y + bar_h + 8, vol_w + 8, 12, accent);
+        M5.Display.setTextColor(bg, accent);
+    } else {
+        M5.Display.setTextColor(fg, bg);
+    }
+    M5.Display.setCursor(vol_x, bar_y + bar_h + 10);
+    M5.Display.print(vol_str);
+
+    // ???????????? ????????????????????: -10 | play/pause | +10
     int icon_y = h / 2 + 20;
     int cx = w / 2;
     int spacing = 50;
 
-    // -10s (РґРІРѕР№РЅРѕР№ Р»РµРІС‹Р№ С‚СЂРµСѓРіРѕР»СЊРЅРёРє)
+    // -10s (?????????????? ?????????? ??????????????????????)
     int bx = cx - spacing;
     uint32_t col_back = (selected == CTRL_BACK10) ? accent : fg;
     M5.Display.fillTriangle(bx, icon_y, bx + 10, icon_y - 8, bx + 10, icon_y + 8, col_back);
@@ -218,7 +241,7 @@ static void draw_player_screen(const char *fname, const WavInfo &wav, size_t pos
     M5.Display.setCursor(bx - 8, icon_y + 14);
     M5.Display.print("-10s");
 
-    // Play/Pause РїРѕ С†РµРЅС‚СЂСѓ
+    // Play/Pause ???? ????????????
     uint32_t col_pp = (selected == CTRL_PLAYPAUSE) ? accent : fg;
     if (playing) {
         M5.Display.fillRect(cx - 8, icon_y - 8, 6, 16, col_pp);
@@ -227,7 +250,7 @@ static void draw_player_screen(const char *fname, const WavInfo &wav, size_t pos
         M5.Display.fillTriangle(cx - 7, icon_y - 9, cx - 7, icon_y + 9, cx + 9, icon_y, col_pp);
     }
 
-    // +10s (РґРІРѕР№РЅРѕР№ РїСЂР°РІС‹Р№ С‚СЂРµСѓРіРѕР»СЊРЅРёРє)
+    // +10s (?????????????? ???????????? ??????????????????????)
     int fx = cx + spacing - 18;
     uint32_t col_fwd = (selected == CTRL_FWD10) ? accent : fg;
     M5.Display.fillTriangle(fx, icon_y - 8, fx, icon_y + 8, fx + 10, icon_y, col_fwd);
@@ -383,17 +406,193 @@ void k85_run_music_player(void) {
                 if (k85_ab_held(500)) { k85_wait_ab_release(); break; }
                 vTaskDelay(pdMS_TO_TICKS(30));
             }
-            continue; // РЅР°Р·Р°Рґ Рє РІС‹Р±РѕСЂСѓ РёСЃС‚РѕС‡РЅРёРєР°, Р° РЅРµ РїРѕР»РЅС‹Р№ РІС‹С…РѕРґ
+            continue; // ?????????? ?? ???????????? ??????????????????, ?? ???? ???????????? ??????????
         }
         closedir(test);
 
         char chosen_path[300];
         if (browse_for_wav(chosen_path, sizeof(chosen_path), root)) {
-            play_wav_file(chosen_path);
+            if (entry_is_mp3(chosen_path)) {
+                play_mp3_file(chosen_path);
+            } else {
+                play_wav_file(chosen_path);
+            }
         }
-        // РїРѕСЃР»Рµ РїР»РµРµСЂР°/РѕС‚РјРµРЅС‹ Р±СЂР°СѓР·РµСЂР° вЂ” РІРѕР·РІСЂР°С‰Р°РµРјСЃСЏ Рє РІС‹Р±РѕСЂСѓ РёСЃС‚РѕС‡РЅРёРєР°
+        // ?????????? ????????????/???????????? ???????????????? ??? ???????????????????????? ?? ???????????? ??????????????????
     }
 }
 
 #pragma GCC diagnostic pop
+
+
+
+
+static void draw_player_screen_mp3(const char *fname, double pos_sec, double total_sec,
+                                    bool playing, int selected) {
+    uint32_t bg = k85_get_bg();
+    uint32_t fg = k85_get_fg();
+    uint32_t accent = k85_get_accent();
+    int w = M5.Display.width();
+    int h = M5.Display.height();
+
+    M5.Display.fillScreen(bg);
+    M5.Display.setTextSize(1);
+    M5.Display.setTextColor(accent, bg);
+    M5.Display.setCursor(6, 6);
+    M5.Display.print("MUSIC PLAYER (MP3)");
+
+    M5.Display.setTextColor(fg, bg);
+    M5.Display.setCursor(6, 20);
+    M5.Display.printf("%.28s", fname);
+
+    char time_str[32];
+    snprintf(time_str, sizeof(time_str), "%02d:%02d / %02d:%02d",
+             (int)pos_sec / 60, (int)pos_sec % 60, (int)total_sec / 60, (int)total_sec % 60);
+    M5.Display.setCursor(6, 36);
+    M5.Display.print(time_str);
+
+    int bar_x = 6, bar_y = 50, bar_w = w - 12, bar_h = 6;
+    M5.Display.drawRect(bar_x, bar_y, bar_w, bar_h, 0x555555);
+    float progress = total_sec > 0 ? (float)(pos_sec / total_sec) : 0;
+    if (progress < 0) progress = 0;
+    if (progress > 1) progress = 1;
+    M5.Display.fillRect(bar_x + 1, bar_y + 1, (int)((bar_w - 2) * progress), bar_h - 2, accent);
+
+
+    // Vol readout
+    uint32_t col_vol = (selected == CTRL_VOL_DOWN || selected == CTRL_VOL_UP) ? accent : fg;
+    char vol_str[24];
+    snprintf(vol_str, sizeof(vol_str), "Vol: %d%%", k85_get_sound_volume());
+    int vol_w = (int)strlen(vol_str) * 6 + 8;
+    int vol_x = (w - vol_w) / 2;
+    if (selected == CTRL_VOL_DOWN || selected == CTRL_VOL_UP) {
+        M5.Display.fillRect(vol_x - 4, bar_y + bar_h + 8, vol_w + 8, 12, accent);
+        M5.Display.setTextColor(bg, accent);
+    } else {
+        M5.Display.setTextColor(fg, bg);
+    }
+    M5.Display.setCursor(vol_x, bar_y + bar_h + 10);
+    M5.Display.print(vol_str);
+
+    int icon_y = h / 2 + 20;
+    int cx = w / 2;
+    int spacing = 50;
+
+    int bx = cx - spacing;
+    uint32_t col_back = (selected == CTRL_BACK10) ? accent : fg;
+    M5.Display.fillTriangle(bx, icon_y, bx + 10, icon_y - 8, bx + 10, icon_y + 8, col_back);
+    M5.Display.fillTriangle(bx + 8, icon_y, bx + 18, icon_y - 8, bx + 18, icon_y + 8, col_back);
+    M5.Display.setTextColor(col_back, bg);
+    M5.Display.setCursor(bx - 8, icon_y + 14);
+    M5.Display.print("-10s");
+
+    uint32_t col_pp = (selected == CTRL_PLAYPAUSE) ? accent : fg;
+    if (playing) {
+        M5.Display.fillRect(cx - 8, icon_y - 8, 6, 16, col_pp);
+        M5.Display.fillRect(cx + 2, icon_y - 8, 6, 16, col_pp);
+    } else {
+        M5.Display.fillTriangle(cx - 7, icon_y - 9, cx - 7, icon_y + 9, cx + 9, icon_y, col_pp);
+    }
+
+    int fx = cx + spacing - 18;
+    uint32_t col_fwd = (selected == CTRL_FWD10) ? accent : fg;
+    M5.Display.fillTriangle(fx, icon_y - 8, fx, icon_y + 8, fx + 10, icon_y, col_fwd);
+    M5.Display.fillTriangle(fx + 8, icon_y - 8, fx + 8, icon_y + 8, fx + 18, icon_y, col_fwd);
+    M5.Display.setTextColor(col_fwd, bg);
+    M5.Display.setCursor(fx - 2, icon_y + 14);
+    M5.Display.print("+10s");
+
+    M5.Display.setTextColor(0x777777, bg);
+    M5.Display.setCursor(6, h - 12);
+    M5.Display.print("A=select B=go  hold A+B=stop");
+}
+
+static void play_mp3_file(const char *path) {
+    K85Mp3Info info;
+    if (!k85_mp3_open(path, &info)) {
+        k85_show_message("Unsupported MP3\nA+B=back");
+        vTaskDelay(pdMS_TO_TICKS(1500));
+        return;
+    }
+
+    const char *fname = strrchr(path, '/');
+    fname = fname ? fname + 1 : path;
+
+    double pos_sec = 0;
+    double total_sec = info.duration_sec_est;
+    bool playing = true;
+    int selected = CTRL_PLAYPAUSE;
+    int64_t play_start_us = esp_timer_get_time();
+
+    draw_player_screen_mp3(fname, pos_sec, total_sec, playing, selected);
+
+    uint32_t last_redraw = 0;
+    while (true) {
+        k85_input_update();
+
+        if (k85_ab_held(600)) {
+            k85_wait_ab_release();
+            M5.Speaker.stop();
+            k85_mp3_close();
+            return;
+        }
+
+        if (playing) {
+            int64_t now_us = esp_timer_get_time();
+            double wall_elapsed = (double)(now_us - play_start_us) / 1000000.0;
+            if (pos_sec <= wall_elapsed + 0.05) {
+                if (!k85_mp3_decode_and_feed_next_frame(&pos_sec)) {
+                    playing = false;
+                }
+            }
+        }
+
+        bool need_redraw = false;
+
+        if (k85_btn_a_pressed()) {
+            selected = (selected + 1) % 5;
+            need_redraw = true;
+        }
+
+        if (k85_btn_b_pressed()) {
+            if (selected == CTRL_VOL_DOWN) {
+                int v = k85_get_sound_volume() - 10;
+                if (v < 0) v = 0;
+                k85_set_sound_volume(v);
+                k85_apply_sound_volume();
+            } else if (selected == CTRL_VOL_UP) {
+                int v = k85_get_sound_volume() + 10;
+                if (v > 100) v = 100;
+                k85_set_sound_volume(v);
+                k85_apply_sound_volume();
+            } else if (selected == CTRL_PLAYPAUSE) {
+                playing = !playing;
+                if (playing) {
+                    play_start_us = esp_timer_get_time() - (int64_t)(pos_sec * 1000000.0);
+                }
+            } else {
+                double delta = (selected == CTRL_BACK10) ? -10.0 : 10.0;
+                k85_mp3_seek_relative(delta);
+                pos_sec += delta;
+                if (pos_sec < 0) pos_sec = 0;
+                play_start_us = esp_timer_get_time() - (int64_t)(pos_sec * 1000000.0);
+            }
+            need_redraw = true;
+        }
+
+        uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+        if (need_redraw || now - last_redraw > 300) {
+            draw_player_screen_mp3(fname, pos_sec, total_sec, playing, selected);
+            last_redraw = now;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
+}
+
+
+
+
+
+
 

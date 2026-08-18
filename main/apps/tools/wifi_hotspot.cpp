@@ -1,4 +1,4 @@
-﻿#include "wifi_hotspot.h"
+#include "wifi_hotspot.h"
 #include "wifi.h"
 #include "common.h"
 #include "power.h"
@@ -7,12 +7,14 @@
 #include "list_menu.h"
 #include "text_input.h"
 #include "../../core/config.h"
+#include "../../net/firmware_flash.h"
 
 #include "esp_wifi.h"
 #include "esp_netif.h"
 #include "esp_timer.h"
 #include "esp_system.h"
 #include "esp_random.h"
+#include "esp_ota_ops.h"
 #include "lwip/sockets.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -31,10 +33,7 @@
 
 static esp_netif_t *s_ap_netif = nullptr;
 static char s_web_access_key[16];
-static int s_failed_attempts = 0;
-static int64_t s_lockout_until_us = 0;
 
-// ---------- Р“РµРЅРµСЂР°С†РёСЏ СЃР»СѓС‡Р°Р№РЅС‹С… СЃС‚СЂРѕРє (РїР°СЂРѕР»СЊ AP / access key) ----------
 static void gen_random_string(char *out, int len, bool digits_only) {
     static const char charset_full[] = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
     static const char charset_digits[] = "0123456789";
@@ -61,7 +60,6 @@ static void url_decode(const char *src, char *dst, size_t dst_size) {
     dst[di] = 0;
 }
 
-// Р Р°Р·СЂРµС€Р°РµРј РїРѕРґРґРёСЂРµРєС‚РѕСЂРёРё (СЃРѕ СЃР»РµС€Р°РјРё РІРЅСѓС‚СЂРё), РЅРѕ Р±Р»РѕРєРёСЂСѓРµРј ".." Рё РІРµРґСѓС‰РёР№ "/"
 static bool sanitize_relpath(const char *name) {
     if (!name[0]) return false;
     if (strstr(name, "..")) return false;
@@ -92,7 +90,7 @@ static bool get_query_param(const char *query, const char *key, char *out, size_
     p += strlen(search);
     const char *end = strchr(p, '&');
     size_t len = end ? (size_t)(end - p) : strlen(p);
-    char raw[192];
+    char raw[256];
     if (len >= sizeof(raw)) len = sizeof(raw) - 1;
     memcpy(raw, p, len);
     raw[len] = 0;
@@ -166,7 +164,7 @@ static void sanitize_filename(char *name) {
     if (name[0] == 0) strncpy(name, "upload.bin", 32);
 }
 
-// target_dir вЂ” РѕС‚РЅРѕСЃРёС‚РµР»СЊРЅС‹Р№ РїСѓС‚СЊ С‚РµРєСѓС‰РµР№ РїР°РїРєРё ("" = РєРѕСЂРµРЅСЊ, "bios" = РїРѕРґРїР°РїРєР°)
+// ---------- Обычный upload файлов (в LittleFS) ----------
 static bool handle_upload_body(int conn_fd, const char *header,
                                 const char *initial_body, long initial_body_len,
                                 const char *target_dir) {
@@ -266,6 +264,85 @@ static bool handle_upload_body(int conn_fd, const char *header,
     return true;
 }
 
+// ---------- Upload прошивки — стримится сразу в свободный OTA-слот, БЕЗ сохранения в LittleFS ----------
+static bool handle_firmware_upload_body(int conn_fd, const char *header,
+                                         const char *initial_body, long initial_body_len) {
+    const char *b = strstr(header, "boundary=");
+    if (!b) return false;
+    b += strlen("boundary=");
+
+    char delim[132];
+    size_t di = 0;
+    delim[di++] = '-';
+    delim[di++] = '-';
+    while (*b && *b != '\r' && *b != '\n' && *b != ';' && di < sizeof(delim) - 1) {
+        delim[di++] = *b++;
+    }
+    delim[di] = 0;
+    long delim_len = (long)strlen(delim);
+    if (delim_len <= 2) return false;
+
+    static char buf[4096];
+    long have = 0;
+    if (initial_body_len > 0) {
+        long n = initial_body_len;
+        if (n > (long)sizeof(buf)) n = sizeof(buf);
+        memcpy(buf, initial_body, n);
+        have = n;
+    }
+
+    long part_headers_end = find_bytes(buf, have, "\r\n\r\n", 4);
+    while (part_headers_end < 0) {
+        if (have >= (long)sizeof(buf) - 1) return false;
+        int r = recv(conn_fd, buf + have, sizeof(buf) - have, 0);
+        if (r <= 0) return false;
+        have += r;
+        part_headers_end = find_bytes(buf, have, "\r\n\r\n", 4);
+    }
+
+    long data_start = part_headers_end + 4;
+    long pending_len = have - data_start;
+    if (pending_len > 0) memmove(buf, buf + data_start, pending_len);
+    have = pending_len;
+
+    if (!k85_fwflash_stream_begin()) return false;
+
+    bool ok = false;
+    while (true) {
+        long dpos = find_bytes(buf, have, delim, delim_len);
+        if (dpos >= 0) {
+            long write_len = dpos;
+            if (write_len >= 2 && buf[write_len - 2] == '\r' && buf[write_len - 1] == '\n') {
+                write_len -= 2;
+            }
+            if (write_len > 0) {
+                if (!k85_fwflash_stream_write((const uint8_t *)buf, write_len)) { k85_fwflash_stream_abort(); return false; }
+            }
+            ok = true;
+            break;
+        }
+        long safe_len = have - (delim_len + 2);
+        if (safe_len > 0) {
+            if (!k85_fwflash_stream_write((const uint8_t *)buf, safe_len)) { k85_fwflash_stream_abort(); return false; }
+            memmove(buf, buf + safe_len, have - safe_len);
+            have -= safe_len;
+        }
+        if (have >= (long)sizeof(buf)) break;
+        int r = recv(conn_fd, buf + have, sizeof(buf) - have, 0);
+        if (r <= 0) break;
+        have += r;
+    }
+
+    if (!ok) {
+        k85_fwflash_stream_abort();
+        k85_log("firmware upload: incomplete, aborted");
+        return false;
+    }
+    bool ended = k85_fwflash_stream_end();
+    k85_log("firmware upload: %s", ended ? "written to free slot" : "write failed");
+    return ended;
+}
+
 static bool handle_download(int conn_fd, const char *relpath) {
     if (!sanitize_relpath(relpath)) return false;
     char full_path[256];
@@ -294,7 +371,6 @@ static bool handle_download(int conn_fd, const char *relpath) {
     return true;
 }
 
-// РЎС‚СЂРѕРёС‚ СЂРѕРґРёС‚РµР»СЊСЃРєРёР№ РїСѓС‚СЊ РґР»СЏ ".." вЂ” РѕС‚СЂРµР·Р°РµС‚ РїРѕСЃР»РµРґРЅРёР№ СЃРµРіРјРµРЅС‚
 static void get_parent_dir(const char *dir, char *out, size_t out_size) {
     if (!dir[0]) { out[0] = 0; return; }
     char tmp[192];
@@ -305,7 +381,6 @@ static void get_parent_dir(const char *dir, char *out, size_t out_size) {
     snprintf(out, out_size, "%s", tmp);
 }
 
-// ---------- Р“Р»Р°РІРЅР°СЏ СЃС‚СЂР°РЅРёС†Р°: СЃС‚Р°С‚СѓСЃ + РЅР°РІРёРіР°С†РёСЏ РїРѕ РїР°РїРєРµ ----------
 static void build_index_page(char *out, size_t out_size, const char *ssid, const char *key, const char *dir) {
     int64_t uptime_s = esp_timer_get_time() / 1000000;
 
@@ -323,6 +398,7 @@ static void build_index_page(char *out, size_t out_size, const char *ssid, const
         "a{color:#0ff;text-decoration:none;margin-right:8px}"
         "a.del{color:#f66}"
         "a.dir{color:#ff0;font-weight:bold}"
+        "a.fw{color:#0f0;font-weight:bold}"
         "input{background:#000;color:#0f0;border:1px solid #0ff;padding:4px;font-family:monospace}"
         "button{background:#0ff;color:#000;border:none;padding:6px 12px;font-family:monospace;cursor:pointer}"
         "</style></head><body>"
@@ -332,7 +408,7 @@ static void build_index_page(char *out, size_t out_size, const char *ssid, const
         "<b>Uptime:</b> %llds<br>"
         "<b>Free heap:</b> %lu bytes"
         "</div>"
-        "<p><b>Path:</b> /littlefs%s%s</p>"
+        "<p><a class=fw href='/firmware?key=%s'>&#9889; Firmware update</a></p>"
         "<p><a href='/upload?dir=%s&key=%s'>+ Upload file here</a></p>"
         "<form method=GET action=/mkdir style='margin:8px 0'>"
         "<input type=hidden name=dir value='%s'>"
@@ -341,13 +417,12 @@ static void build_index_page(char *out, size_t out_size, const char *ssid, const
         "<button type=submit>+ New folder here</button></form>"
         "<table><tr><th>Name</th><th>Size</th><th>Actions</th></tr>",
         ssid, (long long)uptime_s, (unsigned long)esp_get_free_heap_size(),
-        dir[0] ? "/" : "", dir,
+        key,
         dir, key, dir, key);
 
     if (written0 < 0) return;
     used = strlen(out);
 
-    // РЎСЃС‹Р»РєР° ".." РµСЃР»Рё РЅРµ РІ РєРѕСЂРЅРµ
     if (dir[0]) {
         char row[256];
         int w = snprintf(row, sizeof(row),
@@ -366,7 +441,6 @@ static void build_index_page(char *out, size_t out_size, const char *ssid, const
     if (d) {
         struct dirent *ent;
         int count = 0;
-        // РЎРЅР°С‡Р°Р»Р° РїР°РїРєРё
         while ((ent = readdir(d)) != nullptr && count < K85_FM_MAX_ENTRIES) {
             if (!strcmp(ent->d_name, ".") || !strcmp(ent->d_name, "..")) continue;
             char full[256];
@@ -449,6 +523,64 @@ static void build_upload_form(char *out, size_t out_size, const char *key, const
         dir[0] ? "/" : "", dir, dir, key, dir, key);
 }
 
+// ---------- UEFI-style страница обновления прошивки ----------
+static void build_firmware_page(char *out, size_t out_size, const char *key) {
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    const char *free_slot = k85_fwflash_free_slot_label();
+
+    static char names[K85_FW_LIST_MAX][64];
+    static char urls[K85_FW_LIST_MAX][256];
+    int count = 0;
+    bool listed = k85_fwflash_list_available(names, urls, K85_FW_LIST_MAX, &count);
+
+    size_t used = 0;
+    int w = snprintf(out, out_size,
+        "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name=viewport content='width=device-width,initial-scale=1'>"
+        "<title>k85OS Firmware</title>"
+        "<style>body{background:#000020;color:#eee;font-family:monospace;padding:16px;max-width:600px;margin:auto}"
+        "h1{color:#8080ff;border-bottom:1px solid #5555aa;padding-bottom:8px}"
+        ".card{background:#000040;padding:12px;margin:10px 0;border-radius:4px;border:1px solid #5555aa}"
+        "a{color:#8080ff}"
+        "a.fw{display:block;padding:8px;background:#000040;margin:6px 0;border:1px solid #5555aa;text-decoration:none;color:#0f0}"
+        "input,button{font-size:16px;margin-top:10px;padding:6px}"
+        "input{background:#000;color:#0f0;border:1px solid #8080ff}"
+        "button{background:#8080ff;color:#000;border:none;padding:8px 16px;cursor:pointer}"
+        "</style></head><body>"
+        "<h1>k85OS Setup &mdash; Firmware</h1>"
+        "<div class='card'>"
+        "<b>Running slot:</b> %s<br>"
+        "<b>Free slot:</b> %s<br>"
+        "<b>Note:</b> flashing here only WRITES the free slot.<br>"
+        "Activate it via device GRUB menu &rarr; \"Alt Firmware\"."
+        "</div>",
+        running ? running->label : "?", free_slot);
+    if (w > 0) used = (size_t)w;
+
+    if (listed && count > 0) {
+        int w2 = snprintf(out + used, out_size - used, "<h2>Available from k85OS releases</h2>");
+        if (w2 > 0) used += w2;
+        for (int i = 0; i < count; i++) {
+            int wr = snprintf(out + used, out_size - used,
+                "<a class=fw href='/firmware/pull?asset=%d&key=%s' onclick=\"return confirm('Flash %s into free slot?')\">%s</a>",
+                i, key, names[i], names[i]);
+            if (wr > 0 && used + (size_t)wr < out_size) used += wr;
+        }
+    } else {
+        int w2 = snprintf(out + used, out_size - used, "<p>No releases found (or WiFi not connected).</p>");
+        if (w2 > 0) used += w2;
+    }
+
+    int w3 = snprintf(out + used, out_size - used,
+        "<h2>Or upload your own .bin</h2>"
+        "<form method=POST action='/firmware/upload?key=%s' enctype=multipart/form-data>"
+        "<input type=file name=file accept='.bin'><br>"
+        "<button type=submit onclick=\"return confirm('Flash uploaded file into free slot?')\">Upload & Flash</button>"
+        "</form>"
+        "<p><a href='/?key=%s'>&larr; Back to files</a></p></body></html>",
+        key, key);
+    if (w3 > 0 && used + (size_t)w3 < out_size) used += w3;
+}
+
 static void handle_connection(int conn_fd, const char *ssid) {
     static char req_buf[4096];
     long req_len = 0;
@@ -480,32 +612,45 @@ static void handle_connection(int conn_fd, const char *ssid) {
         snprintf(path, sizeof(path), "%s", path_full);
     }
 
-    if (esp_timer_get_time() < s_lockout_until_us) {
-        send_http_response(conn_fd, "429 Too Many Requests", "text/html",
-            "<html><body style='background:#111;color:#f66;font-family:monospace;padding:20px'>"
-            "<h1>Too many attempts</h1><p>Locked out, try again in a minute.</p></body></html>");
-        return;
-    }
-
     if (!check_access_key(query)) {
-        s_failed_attempts++;
-        if (s_failed_attempts >= 5) {
-            s_lockout_until_us = esp_timer_get_time() + 60000000LL; // 60 сек блокировки
-            s_failed_attempts = 0;
-            k85_log("web-fm: too many failed key attempts, locked out for 60s");
-        }
         send_http_response(conn_fd, "401 Unauthorized", "text/html", k85_login_page_html);
         return;
     }
-    s_failed_attempts = 0; // сброс счётчика при успешном входе
 
     char dir[192] = {0};
     get_query_param(query, "dir", dir, sizeof(dir));
-    if (dir[0] && !sanitize_relpath(dir)) dir[0] = 0; // Р·Р°С‰РёС‚Р° РѕС‚ .. РІ dir
+    if (dir[0] && !sanitize_relpath(dir)) dir[0] = 0;
 
     bool is_post = (strcmp(method, "POST") == 0);
 
-    if (is_post && strcmp(path, "/upload") == 0) {
+    if (strcmp(path, "/firmware") == 0) {
+        static char body[6144];
+        build_firmware_page(body, sizeof(body), s_web_access_key);
+        send_http_response(conn_fd, "200 OK", "text/html", body);
+    } else if (strcmp(path, "/firmware/pull") == 0) {
+        char asset_str[8] = {0};
+        get_query_param(query, "asset", asset_str, sizeof(asset_str));
+        int idx = atoi(asset_str);
+
+        static char names[K85_FW_LIST_MAX][64];
+        static char urls[K85_FW_LIST_MAX][256];
+        int count = 0;
+        bool ok = false;
+        if (k85_fwflash_list_available(names, urls, K85_FW_LIST_MAX, &count) && idx >= 0 && idx < count) {
+            ok = k85_fwflash_from_url(urls[idx], nullptr);
+        }
+        send_http_response(conn_fd, ok ? "200 OK" : "500 Internal Server Error", "text/html",
+                            ok ? "<html><body style='background:#000020;color:#0f0;font-family:monospace;padding:20px'>"
+                                 "<h1>Flashed to free slot</h1><p>Activate via device GRUB &rarr; Alt Firmware.</p></body></html>"
+                               : k85_generic_fail_html);
+    } else if (is_post && strcmp(path, "/firmware/upload") == 0) {
+        long body_have = req_len - (headers_end + 4);
+        bool ok = handle_firmware_upload_body(conn_fd, req_buf, req_buf + headers_end + 4, body_have);
+        send_http_response(conn_fd, ok ? "200 OK" : "400 Bad Request", "text/html",
+                            ok ? "<html><body style='background:#000020;color:#0f0;font-family:monospace;padding:20px'>"
+                                 "<h1>Flashed to free slot</h1><p>Activate via device GRUB &rarr; Alt Firmware.</p></body></html>"
+                               : k85_upload_fail_html);
+    } else if (is_post && strcmp(path, "/upload") == 0) {
         long body_have = req_len - (headers_end + 4);
         bool ok = handle_upload_body(conn_fd, req_buf, req_buf + headers_end + 4, body_have, dir);
         send_http_response(conn_fd, ok ? "200 OK" : "400 Bad Request", "text/html",
@@ -590,19 +735,15 @@ static bool choose_ap_password(char *out_password, size_t out_size) {
 }
 
 void k85_wifi_hotspot_regenerate_key(void) {
-    gen_random_string(s_web_access_key, 6 + (int)(esp_random() % 5), false); // буквы+цифры вместо только цифр — больше энтропии
+    gen_random_string(s_web_access_key, 6 + (int)(esp_random() % 5), true);
     k85_log("web-fm: access key regenerated");
 }
 
 void k85_run_wifi_hotspot(void) {
-    char password[32] = "";
-    bool is_open = g_config.ap_open;
+    char password[32];
+    if (!choose_ap_password(password, sizeof(password))) return;
 
-    if (!is_open) {
-        if (!choose_ap_password(password, sizeof(password))) return;
-    }
-
-    gen_random_string(s_web_access_key, 6 + (int)(esp_random() % 5), false); // буквы+цифры вместо только цифр — больше энтропии
+    gen_random_string(s_web_access_key, 6 + (int)(esp_random() % 5), false);
 
     k85_wifi_init();
 
@@ -621,7 +762,7 @@ void k85_run_wifi_hotspot(void) {
     wifi_config_t ap_config = {};
     snprintf((char *)ap_config.ap.ssid, sizeof(ap_config.ap.ssid), "%s", ssid);
     ap_config.ap.ssid_len = strlen(ssid);
-    if (!is_open) {
+    if (!g_config.ap_open) {
         snprintf((char *)ap_config.ap.password, sizeof(ap_config.ap.password), "%s", password);
         ap_config.ap.authmode = WIFI_AUTH_WPA2_PSK;
     } else {
@@ -647,8 +788,13 @@ void k85_run_wifi_hotspot(void) {
     k85_log("Hotspot started: %s @ %s", ssid, ip_str);
     char msg[180];
     auto redraw_hotspot_msg = [&]() {
-        snprintf(msg, sizeof(msg), "AP: %s\nAP pass: %s\nIP: %s\nWeb key: %s\nB=new key  A+B=stop",
-                 ssid, password, ip_str, s_web_access_key);
+        if (g_config.ap_open) {
+            snprintf(msg, sizeof(msg), "AP: %s (open)\nCh: %d\nIP: %s\nWeb key: %s\nB=new key  A+B=stop",
+                     ssid, channel, ip_str, s_web_access_key);
+        } else {
+            snprintf(msg, sizeof(msg), "AP: %s\nAP pass: %s\nCh: %d\nIP: %s\nWeb key: %s\nB=new key  A+B=stop",
+                     ssid, password, channel, ip_str, s_web_access_key);
+        }
         k85_show_message(msg);
     };
     redraw_hotspot_msg();
@@ -709,8 +855,3 @@ void k85_run_wifi_hotspot(void) {
 }
 
 #pragma GCC diagnostic pop
-
-
-
-
-
