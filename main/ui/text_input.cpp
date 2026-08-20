@@ -1,4 +1,4 @@
-﻿#include "text_input.h"
+#include "text_input.h"
 #include "theme.h"
 #include "battery.h"
 #include "power.h"
@@ -19,9 +19,9 @@ static const char *KB_ROW0[] = {"1","2","3","4","5","6","7","8","9","0"};
 static const char *KB_ROW1_EN[] = {"Q","W","E","R","T","Y","U","I","O","P"};
 static const char *KB_ROW2_EN[] = {"A","S","D","F","G","H","J","K","L"};
 static const char *KB_ROW3_EN[] = {"Z","X","C","V","B","N","M","-","_","."};
-static const char *KB_ROW1_RU[] = {"Й","Ц","У","К","Е","Н","Г","Ш","Щ","З","Х","Ъ"};
-static const char *KB_ROW2_RU[] = {"Ф","Ы","В","А","П","Р","О","Л","Д","Ж","Э"};
-static const char *KB_ROW3_RU[] = {"Я","Ч","С","М","И","Т","Ь","Б","Ю","Ё","."};
+static const char *KB_ROW1_RU[] = {"?","?","?","?","?","?","?","?","?","?","?","?"};
+static const char *KB_ROW2_RU[] = {"?","?","?","?","?","?","?","?","?","?","?"};
+static const char *KB_ROW3_RU[] = {"?","?","?","?","?","?","?","?","?","?","."};
 static const char *KB_ROW4_EN[] = {"SPACE","DEL","EXIT","OK","RU","CAPS"};
 static const char *KB_ROW4_RU[] = {"SPACE","DEL","EXIT","OK","EN","CAPS"};
 
@@ -44,9 +44,10 @@ bool k85_text_input(const char *prompt, const char *initial, char *out, size_t o
     snprintf(text, sizeof(text), "%s", initial ? initial : "");
 
     int st_row = 0, st_col = 0;
-    int64_t last_a = 0, last_b = 0;
-    int a_count = 0, b_count = 0;
-    const int double_ms = 350;
+    int64_t a_press_start = 0;
+    bool a_was_down = false;
+    bool a_hold_triggered = false;
+    const int hold_ms = 400;
     bool is_ru = false;
     bool is_caps = false;
 
@@ -109,19 +110,23 @@ bool k85_text_input(const char *prompt, const char *initial, char *out, size_t o
         int64_t now = k85_ti_ticks_ms();
         KbLayout kb = is_ru ? kb_layout_ru() : kb_layout_en();
 
-        if (k85_btn_a_pressed()) {
-            k85_wake_screen();
-            if ((now - last_a) < double_ms && a_count == 1) {
-                st_row = (st_row + 1) % 5;
-                if (st_col > kb.counts[st_row] - 1) st_col = kb.counts[st_row] - 1;
-                a_count = 0;
-            } else {
-                st_col = (st_col + 1) % kb.counts[st_row];
-                a_count = 1;
-            }
-            last_a = now;
+        bool a_down_now = k85_btn_a_is_down();
+        if (a_down_now && !a_was_down) {
+            a_press_start = now;
+            a_hold_triggered = false;
+        }
+        if (a_down_now && !a_hold_triggered && (now - a_press_start) >= hold_ms) {
+            st_row = (st_row + 1) % 5;
+            if (st_col > kb.counts[st_row] - 1) st_col = kb.counts[st_row] - 1;
+            a_hold_triggered = true;
             draw();
         }
+        if (!a_down_now && a_was_down && !a_hold_triggered) {
+            k85_wake_screen();
+            st_col = (st_col + 1) % kb.counts[st_row];
+            draw();
+        }
+        a_was_down = a_down_now;
         if (k85_btn_b_pressed()) {
             k85_wake_screen();
             const char *key = kb.rows[st_row][st_col];
@@ -192,5 +197,9 @@ void k85_area_show(const char *const lines[], int count, const char *title) {
         vTaskDelay(pdMS_TO_TICKS(30));
     }
 }
+
+
+
+
 
 

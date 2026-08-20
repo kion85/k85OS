@@ -1,4 +1,4 @@
-﻿#include "settings_menu.h"
+#include "settings_menu.h"
 #include "config.h"
 #include "theme.h"
 #include "power.h"
@@ -16,6 +16,8 @@
 #include "lock_screen_settings.h"
 #include "../core/lock_auth.h"
 #include "../net/ssh_server.h"
+#include "esp_heap_caps.h"
+#include "esp_log.h"
 
 #include "M5Unified.h"
 #include "freertos/FreeRTOS.h"
@@ -70,7 +72,7 @@ static void settings_value_str(char *out, size_t out_size, int idx) {
         case 11: snprintf(out, out_size, "%s", g_config.bg_gradient_enabled ? "ON" : "OFF"); break;
         case 12: out[0] = 0; break;
         case 13: snprintf(out, out_size, "%s", g_config.ssh_enabled ? "ON" : "OFF"); break;
-        case 14: out[0] = 0; break; // Back - без значения
+        case 14: out[0] = 0; break; // Back - ??? ????????
         default: out[0] = 0;
     }
 }
@@ -121,7 +123,7 @@ static void settings_draw(void) {
         y += 14;
     }
 
-    // Индикатор скролла справа
+    // ????????? ??????? ??????
     if (K85_SETTINGS_ITEM_COUNT > K85_SETTINGS_VISIBLE_ROWS) {
         if (s_scroll_top > 0) {
             M5.Display.setCursor(230, 20);
@@ -227,7 +229,7 @@ static void settings_apply_item(int idx) {
                 snprintf(progress_msg, sizeof(progress_msg), "Installing %d%%...", percent);
                 k85_show_message(progress_msg);
             });
-            // Если дошли сюда — не удалось (успех перезагружает устройство сам)
+            // ???? ????? ???? ? ?? ??????? (????? ????????????? ?????????? ???)
             if (!ok) {
                 k85_show_message("Update failed\nA+B=back");
                 while (true) {
@@ -312,10 +314,16 @@ static void settings_apply_item(int idx) {
                 g_config.ssh_enabled = true;
                 k85_config_save();
 
-                if (k85_ssh_server_start()) {
+                ESP_LOGI("k85_settings", "internal free: %u, largest block: %u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+                K85SshStartResult ssh_res = k85_ssh_server_start();
+                if (ssh_res == K85_SSH_START_OK) {
                     k85_show_message("SSH server started\nA+B=back");
+                } else if (ssh_res == K85_SSH_START_NO_WIFI) {
+                    k85_show_message("SSH start failed\n(WiFi not saved)\nA+B=back");
+                } else if (ssh_res == K85_SSH_START_ALREADY_RUNNING) {
+                    k85_show_message("SSH already running\n(or stuck - reboot)\nA+B=back");
                 } else {
-                    k85_show_message("SSH start failed\n(need WiFi saved)\nA+B=back");
+                    k85_show_message("SSH start failed\n(task create error)\nA+B=back");
                 }
                 while (true) {
                     k85_input_update();
@@ -362,6 +370,7 @@ void k85_run_settings_menu(void) {
         vTaskDelay(pdMS_TO_TICKS(30));
     }
 }
+
 
 
 

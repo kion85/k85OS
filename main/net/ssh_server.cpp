@@ -24,6 +24,8 @@
 #include "freertos/task.h"
 #include "esp_system.h"
 #include "esp_timer.h"
+
+static const char *TAG = "k85_ssh";
 #include "esp_heap_caps.h"
 
 #include <cstdio>
@@ -37,6 +39,16 @@
 static TaskHandle_t s_ssh_task = nullptr; // task self-cleanup (static stack stays allocated for reuse)
 static volatile bool s_ssh_running = false;
 static WOLFSSH_CTX *s_ctx = nullptr;
+
+static StaticTask_t s_ssh_task_buf;
+static StackType_t *s_ssh_task_stack = nullptr;
+#define K85_SSH_STACK_WORDS 6144
+
+__attribute__((constructor))
+static void k85_ssh_reserve_stack_early(void) {
+    s_ssh_task_stack = (StackType_t *)heap_caps_malloc(
+        K85_SSH_STACK_WORDS * sizeof(StackType_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+}
 
 // ---------- ????-???? (ECDSA P-256), ???????????? ???? ???, ???????? ? LittleFS ----------
 static bool load_or_generate_host_key(byte **out_der, word32 *out_der_sz) {
@@ -397,22 +409,33 @@ static void ssh_server_task(void *arg) {
     vTaskDelete(nullptr);
 }
 
-bool k85_ssh_server_start(void) {
-    if (s_ssh_task) return false;
+K85SshStartResult k85_ssh_server_start(void) {
+    if (s_ssh_task) {
+        k85_log("ssh: start requested but already running/stuck");
+        return K85_SSH_START_ALREADY_RUNNING;
+    }
     if (!g_config.wifi_saved) {
         k85_log("ssh: no WiFi configured, cannot start");
-        return false;
+        return K85_SSH_START_NO_WIFI;
     }
 
     s_ssh_running = true;
-    BaseType_t ok = xTaskCreate(ssh_server_task, "k85_ssh", 10240, nullptr, 5, &s_ssh_task);
+        if (!s_ssh_task_stack) {
+        k85_log("ssh: no reserved stack available (early allocation failed)");
+        s_ssh_running = false;
+        return K85_SSH_START_TASK_FAILED;
+    }
+    s_ssh_task = xTaskCreateStaticPinnedToCore(
+        ssh_server_task, "k85_ssh", K85_SSH_STACK_WORDS, nullptr, 5,
+        s_ssh_task_stack, &s_ssh_task_buf, tskNO_AFFINITY);
+    BaseType_t ok = (s_ssh_task != nullptr) ? pdPASS : pdFAIL;
     if (ok != pdPASS) {
         k85_log("ssh: xTaskCreate failed (out of internal RAM?)");
         s_ssh_running = false;
         s_ssh_task = nullptr;
-        return false;
+        return K85_SSH_START_TASK_FAILED;
     }
-    return true;
+    return K85_SSH_START_OK;
 }
 
 void k85_ssh_server_stop(void) {
@@ -424,6 +447,11 @@ bool k85_ssh_server_is_running(void) {
 }
 
 #pragma GCC diagnostic pop
+
+
+
+
+
 
 
 

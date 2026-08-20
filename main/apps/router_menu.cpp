@@ -1,4 +1,4 @@
-﻿#pragma GCC diagnostic push
+#pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat-truncation"
 
 #include "router_menu.h"
@@ -13,6 +13,7 @@
 #include "M5Unified.h"
 #include "esp_timer.h"
 #include "esp_random.h"
+#include "esp_heap_caps.h"
 #include "esp_netif.h"
 #include "lwip/sockets.h"
 #include "freertos/FreeRTOS.h"
@@ -40,7 +41,7 @@ static void wait_ab_exit(void) {
     }
 }
 
-// ---------- Мини HTTP-хелперы (тот же паттерн, что в wifi_hotspot.cpp) ----------
+// ---------- ???? HTTP-??????? (??? ?? ???????, ??? ? wifi_hotspot.cpp) ----------
 static void url_decode(const char *src, char *dst, size_t dst_size) {
     size_t di = 0;
     while (*src && di + 1 < dst_size) {
@@ -263,8 +264,8 @@ static void handle_router_connection(int conn_fd, const char *ssid, bool is_gues
         snprintf(redir, sizeof(redir), "/?key=%s", s_web_key);
         send_redirect(conn_fd, redir);
     } else {
-        static char body[6144];
-        build_status_page(body, sizeof(body), ssid, is_guest);
+        static char *body = (char *)heap_caps_malloc(6144, MALLOC_CAP_SPIRAM);
+        build_status_page(body, 6144, ssid, is_guest);
         send_response(conn_fd, "200 OK", body);
     }
 }
@@ -443,5 +444,7 @@ void k85_run_router_menu(void) {
 }
 
 #pragma GCC diagnostic pop
+
+
 
 

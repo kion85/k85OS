@@ -14,6 +14,7 @@
 #include "esp_timer.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_heap_caps.h"
 #include "esp_netif.h"
 #include "lwip/sockets.h"
 #include "lwip/netdb.h"
@@ -376,6 +377,7 @@ int k85_router_dns_rule_list(char out_mac[][18], char out_domain[][64], int max)
 }
 
 #pragma GCC diagnostic pop
+
 
 
 

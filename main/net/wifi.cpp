@@ -1,4 +1,4 @@
-﻿#include "wifi.h"
+#include "wifi.h"
 #include "config.h"
 #include "log.h"
 #include "notifications.h"
@@ -67,7 +67,7 @@ void k85_wifi_init(void) {
     s_inited = true;
 }
 
-// Общая блокирующая логика подключения — используется и connect_saved, и connect
+// ????? ??????????? ?????? ??????????? ? ???????????? ? connect_saved, ? connect
 static bool wifi_do_connect(const char *ssid, const char *password) {
     if (!s_inited) k85_wifi_init();
     if (!s_wifi_event_group) s_wifi_event_group = xEventGroupCreate();
@@ -84,7 +84,7 @@ static bool wifi_do_connect(const char *ssid, const char *password) {
 
     EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
                                             WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
-                                            pdFALSE, pdFALSE, pdMS_TO_TICKS(8000));
+                                            pdFALSE, pdFALSE, pdMS_TO_TICKS(20000));
     return (bits & WIFI_CONNECTED_BIT) != 0;
 }
 
@@ -105,7 +105,7 @@ int k85_wifi_scan(char ssids_out[][33], int max_results) {
 
     wifi_scan_config_t scan_config = {};
     scan_config.show_hidden = false;
-    esp_err_t err = esp_wifi_scan_start(&scan_config, true); // блокирующий скан
+    esp_err_t err = esp_wifi_scan_start(&scan_config, true); // ??????????? ????
     if (err != ESP_OK) {
         k85_log("WiFi scan failed");
         return 0;
@@ -123,7 +123,7 @@ int k85_wifi_scan(char ssids_out[][33], int max_results) {
     for (int i = 0; i < ap_count && n < max_results; i++) {
         const char *ssid = (const char *)records[i].ssid;
         if (ssid[0] == 0) continue;
-        // пропускаем дубликаты SSID (несколько точек с одним именем)
+        // ?????????? ????????? SSID (????????? ????? ? ????? ??????)
         bool dup = false;
         for (int j = 0; j < n; j++) if (!strcmp(ssids_out[j], ssid)) { dup = true; break; }
         if (dup) continue;
@@ -164,5 +164,6 @@ int k85_wifi_get_rssi(void) {
     }
     return 0;
 }
+
 
 

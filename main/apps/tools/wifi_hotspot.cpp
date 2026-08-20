@@ -14,6 +14,7 @@
 #include "esp_timer.h"
 #include "esp_system.h"
 #include "esp_random.h"
+#include "esp_heap_caps.h"
 #include "esp_ota_ops.h"
 #include "lwip/sockets.h"
 #include "freertos/FreeRTOS.h"
@@ -164,7 +165,7 @@ static void sanitize_filename(char *name) {
     if (name[0] == 0) strncpy(name, "upload.bin", 32);
 }
 
-// ---------- Обычный upload файлов (в LittleFS) ----------
+// ---------- ?????????????? upload ???????????? (?? LittleFS) ----------
 static bool handle_upload_body(int conn_fd, const char *header,
                                 const char *initial_body, long initial_body_len,
                                 const char *target_dir) {
@@ -264,7 +265,7 @@ static bool handle_upload_body(int conn_fd, const char *header,
     return true;
 }
 
-// ---------- Upload прошивки — стримится сразу в свободный OTA-слот, БЕЗ сохранения в LittleFS ----------
+// ---------- Upload ???????????????? ??? ?????????????????? ?????????? ?? ?????????????????? OTA-????????, ?????? ???????????????????? ?? LittleFS ----------
 static bool handle_firmware_upload_body(int conn_fd, const char *header,
                                          const char *initial_body, long initial_body_len) {
     const char *b = strstr(header, "boundary=");
@@ -523,7 +524,7 @@ static void build_upload_form(char *out, size_t out_size, const char *key, const
         dir[0] ? "/" : "", dir, dir, key, dir, key);
 }
 
-// ---------- UEFI-style страница обновления прошивки ----------
+// ---------- UEFI-style ???????????????? ???????????????????? ???????????????? ----------
 static void build_firmware_page(char *out, size_t out_size, const char *key) {
     const esp_partition_t *running = esp_ota_get_running_partition();
     const char *free_slot = k85_fwflash_free_slot_label();
@@ -624,8 +625,8 @@ static void handle_connection(int conn_fd, const char *ssid) {
     bool is_post = (strcmp(method, "POST") == 0);
 
     if (strcmp(path, "/firmware") == 0) {
-        static char body[6144];
-        build_firmware_page(body, sizeof(body), s_web_access_key);
+        static char *body = (char *)heap_caps_malloc(6144, MALLOC_CAP_SPIRAM);
+        build_firmware_page(body, 6144, s_web_access_key);
         send_http_response(conn_fd, "200 OK", "text/html", body);
     } else if (strcmp(path, "/firmware/pull") == 0) {
         char asset_str[8] = {0};
@@ -656,8 +657,8 @@ static void handle_connection(int conn_fd, const char *ssid) {
         send_http_response(conn_fd, ok ? "200 OK" : "400 Bad Request", "text/html",
                             ok ? k85_upload_ok_html : k85_upload_fail_html);
     } else if (strcmp(path, "/upload") == 0) {
-        static char body[512];
-        build_upload_form(body, sizeof(body), s_web_access_key, dir);
+        static char *body = (char *)heap_caps_malloc(512, MALLOC_CAP_SPIRAM);
+        build_upload_form(body, 512, s_web_access_key, dir);
         send_http_response(conn_fd, "200 OK", "text/html", body);
     } else if (strcmp(path, "/download") == 0) {
         char name[192] = {0};
@@ -706,8 +707,8 @@ static void handle_connection(int conn_fd, const char *ssid) {
         snprintf(redir, sizeof(redir), "/?dir=%s&key=%s", dir, s_web_access_key);
         send_http_redirect(conn_fd, redir);
     } else {
-        static char body[8192];
-        build_index_page(body, sizeof(body), ssid, s_web_access_key, dir);
+        static char *body = (char *)heap_caps_malloc(8192, MALLOC_CAP_SPIRAM);
+        build_index_page(body, 8192, ssid, s_web_access_key, dir);
         send_http_response(conn_fd, "200 OK", "text/html", body);
     }
 }
@@ -855,3 +856,4 @@ void k85_run_wifi_hotspot(void) {
 }
 
 #pragma GCC diagnostic pop
+
