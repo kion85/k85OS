@@ -1,4 +1,4 @@
-#include "wifi_hotspot.h"
+﻿#include "wifi_hotspot.h"
 #include "wifi.h"
 #include "common.h"
 #include "power.h"
@@ -10,6 +10,7 @@
 #include "../../net/firmware_flash.h"
 
 #include "esp_wifi.h"
+#include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_timer.h"
 #include "esp_system.h"
@@ -708,6 +709,10 @@ static void handle_connection(int conn_fd, const char *ssid) {
         send_http_redirect(conn_fd, redir);
     } else {
         static char *body = (char *)heap_caps_malloc(8192, MALLOC_CAP_SPIRAM);
+        if (!body) {
+            ESP_LOGE("k85_web", "wifi_hotspot: body alloc failed (PSRAM OOM?)");
+            return;
+        }
         build_index_page(body, 8192, ssid, s_web_access_key, dir);
         send_http_response(conn_fd, "200 OK", "text/html", body);
     }

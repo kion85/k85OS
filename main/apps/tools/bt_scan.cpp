@@ -2,6 +2,8 @@
 #include "common.h"
 #include "text_input.h"
 #include "log.h"
+#include "../../net/wifi.h"
+#include "../../core/config.h"
 
 #include "esp_bt.h"
 #include "esp_bt_main.h"
@@ -43,7 +45,15 @@ void k85_run_bt_scan(void) {
     static bool bt_inited = false;
     s_found_n = 0;
 
+    // Освобождаем internal RAM от WiFi-драйвера перед BLE-инициализацией —
+    // без этого esp_bt_controller_enable может уронить CORRUPT HEAP из-за
+    // фрагментации (WiFi+BLE вместе тесно на этой памяти).
+    k85_wifi_stop();
+
     if (!bt_inited) {
+        if (esp_bt_controller_get_status() == ESP_BT_CONTROLLER_STATUS_IDLE) {
+            esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
+        }
         esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
         if (esp_bt_controller_init(&bt_cfg) != ESP_OK ||
             esp_bt_controller_enable(ESP_BT_MODE_BLE) != ESP_OK ||
@@ -87,5 +97,16 @@ void k85_run_bt_scan(void) {
         lines[n] = lines_buf[n]; n++;
     }
     k85_area_show(lines, n, "BLUETOOTH");
+
+    // Полностью гасим BT перед восстановлением WiFi — иначе BT-стек
+    // продолжает держать internal RAM, и повторный k85_wifi_init() падает
+    // ("wifi:malloc buffer fail" -> Expected to init 10 rx buffer, actual is 7).
+    esp_bluedroid_disable();
+    esp_bluedroid_deinit();
+    esp_bt_controller_disable();
+    esp_bt_controller_deinit();
+    bt_inited = false;
+
+    if (!g_config.wifi_disabled) k85_wifi_init();
 }
 

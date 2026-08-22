@@ -5,6 +5,8 @@
 #include "esp_crt_bundle.h"
 #include "esp_log.h"
 #include "cJSON.h"
+#include "esp_heap_caps.h"
+#include "core/heavy_lock.h"
 
 #include <cstdio>
 #include <cstring>
@@ -27,6 +29,8 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
             memcpy(buf->data + buf->len, evt->data, evt->data_len);
             buf->len += evt->data_len;
             buf->data[buf->len] = 0;
+        } else {
+            ESP_LOGW(TAG, "http response truncated, buffer too small (cap=%u)", (unsigned)buf->cap);
         }
     }
     return ESP_OK;
@@ -35,12 +39,29 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
 bool k85_apprepo_fetch_uefi_theme_list(char out_names[][64], char out_urls[][256], int max, int *out_count) {
     *out_count = 0;
 
+    K85HeavyLockGuard heavy_lock(15000);
+    if (!heavy_lock.held) {
+        ESP_LOGW(TAG, "uefi fetch: heavy lock busy, skipping");
+        return false;
+    }
+
     char url[160];
     snprintf(url, sizeof(url), "https://api.github.com/repos/%s/%s/releases/tags/uefi",
              K85_APPREPO_OWNER, K85_APPREPO_REPO);
 
-    static char json_buf[4096];
-    HttpBuf buf = { json_buf, 0, sizeof(json_buf) };
+    // 4096 байт было мало для ответа GitHub API с 13+ ассетами (JSON легко
+    // превышает 6-10KB) — http_event_handler молча отбрасывал "хвост",
+    // cJSON_Parse получал битый JSON и возвращал false ("No themes found",
+    // хотя релиз реально существовал и был заполнен). Увеличиваем буфер и
+    // держим его в PSRAM, а не в internal RAM (по 16KB на статический
+    // internal-буфер, которым пользуются раз в сто лет, не разбрасываемся).
+    #define K85_APPREPO_JSON_BUF_SIZE 32768
+    static char *json_buf = nullptr;
+    if (!json_buf) {
+        json_buf = (char *)heap_caps_malloc(K85_APPREPO_JSON_BUF_SIZE, MALLOC_CAP_SPIRAM);
+        if (!json_buf) return false;
+    }
+    HttpBuf buf = { json_buf, 0, K85_APPREPO_JSON_BUF_SIZE };
     json_buf[0] = 0;
 
     esp_http_client_config_t cfg = {};
@@ -48,7 +69,7 @@ bool k85_apprepo_fetch_uefi_theme_list(char out_names[][64], char out_urls[][256
     cfg.event_handler = http_event_handler;
     cfg.user_data = &buf;
     cfg.crt_bundle_attach = esp_crt_bundle_attach;
-    cfg.timeout_ms = 8000;
+    cfg.timeout_ms = 20000;
     cfg.user_agent = "k85OS-device";
 
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
@@ -58,16 +79,25 @@ bool k85_apprepo_fetch_uefi_theme_list(char out_names[][64], char out_urls[][256
     int status = esp_http_client_get_status_code(client);
     esp_http_client_cleanup(client);
 
+    ESP_LOGW(TAG, "uefi fetch: err=%d status=%d buf_len=%u", err, status, (unsigned)buf.len);
     if (err != ESP_OK || status != 200) {
         ESP_LOGW(TAG, "uefi release fetch failed: err=%d status=%d", err, status);
         return false;
     }
 
     cJSON *root = cJSON_Parse(json_buf);
-    if (!root) return false;
+    if (!root) {
+        ESP_LOGW(TAG, "uefi: cJSON_Parse failed, first 100 chars: %.100s", json_buf);
+        return false;
+    }
 
     cJSON *assets = cJSON_GetObjectItem(root, "assets");
-    if (!cJSON_IsArray(assets)) { cJSON_Delete(root); return false; }
+    if (!cJSON_IsArray(assets)) {
+        ESP_LOGW(TAG, "uefi: no 'assets' array in response");
+        cJSON_Delete(root);
+        return false;
+    }
+    ESP_LOGW(TAG, "uefi: assets array size=%d", cJSON_GetArraySize(assets));
 
     int n = cJSON_GetArraySize(assets);
     int found = 0;
@@ -94,7 +124,7 @@ bool k85_apprepo_download_file(const char *url, const char *dest_path) {
     esp_http_client_config_t cfg = {};
     cfg.url = url;
     cfg.crt_bundle_attach = esp_crt_bundle_attach;
-    cfg.timeout_ms = 8000;
+    cfg.timeout_ms = 20000;
     cfg.user_agent = "k85OS-device";
 
     esp_http_client_handle_t client = esp_http_client_init(&cfg);

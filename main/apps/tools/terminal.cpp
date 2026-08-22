@@ -13,11 +13,14 @@
 #include "esp_system.h"
 
 #include <cstdio>
+#include "text_input.h"
+#include "list_menu.h"
+#include "core/shell_commands.h"
 
-#define K85_TERMINAL_ITEM_COUNT 5
+#define K85_TERMINAL_ITEM_COUNT 6
 
 static const char *k85_terminal_labels[K85_TERMINAL_ITEM_COUNT] = {
-    "Free RAM", "Uptime", "WiFi status", "Reboot", "Exit",
+    "Free RAM", "Uptime", "WiFi status", "Command line", "Reboot", "Exit",
 };
 
 static int s_selected = 0;
@@ -60,6 +63,42 @@ static void terminal_show_result(const char *text) {
     }
 }
 
+// Реальная командная строка — ввод текста через k85_text_input,
+// выполнение через общий k85_shell_run_command (тот же код, что и SSH).
+static void terminal_run_shell(void) {
+    while (true) {
+        char cmd[64] = "";
+        if (!k85_text_input("$ (Exit=back)", "", cmd, sizeof(cmd))) return;
+
+        char resp[256];
+        k85_shell_run_command(cmd, resp, sizeof(resp));
+
+        if (!strcmp(cmd, "exit")) return;
+
+        const char *lines[10];
+        int count = 0;
+        char *p = resp;
+        while (*p && count < 10) {
+            lines[count++] = p;
+            char *nl = strpbrk(p, "\r\n");
+            if (!nl) break;
+            while (*nl == '\r' || *nl == '\n') { *nl = 0; nl++; }
+            p = nl;
+        }
+        if (count == 0) {
+            const char *empty[] = { "(no output)" };
+            k85_area_show(empty, 1, "$");
+        } else {
+            k85_area_show(lines, count, "$");
+        }
+
+        bool reboot = !strcmp(cmd, "reboot");
+        if (reboot) {
+            vTaskDelay(pdMS_TO_TICKS(500));
+            esp_restart();
+        }
+    }
+}
 static void terminal_run_command(int idx, bool *exit_to_main) {
     char buf[128];
     switch (idx) {
@@ -83,13 +122,17 @@ static void terminal_run_command(int idx, bool *exit_to_main) {
             terminal_show_result(buf);
             break;
         }
-        case 3: { // Reboot
+        case 3: { // Command line
+            terminal_run_shell();
+            break;
+        }
+        case 4: { // Reboot
             k85_show_message("Rebooting...");
             vTaskDelay(pdMS_TO_TICKS(800));
             esp_restart();
             break;
         }
-        case 4: { // Exit - сразу в главное меню
+        case 5: { // Exit - сразу в главное меню
             *exit_to_main = true;
             break;
         }

@@ -1,4 +1,4 @@
-#include "system_info.h"
+﻿#include "system_info.h"
 #include "theme.h"
 #include "battery.h"
 #include "power.h"
@@ -19,7 +19,7 @@
 #include <cstdio>
 
 #define K85_FW_NAME "k85OS"
-#define K85_FW_VERSION "v5.0"
+#define K85_FW_VERSION "v5.3"
 
 static temperature_sensor_handle_t s_temp_handle = nullptr;
 static bool s_temp_ready = false;

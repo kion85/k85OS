@@ -1,7 +1,8 @@
-#pragma GCC diagnostic push
+﻿#pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat-truncation"
 
 #include "ssh_server.h"
+#include "core/shell_commands.h"
 #include "core/config.h"
 #include "core/log.h"
 #include "core/battery.h"
@@ -42,12 +43,19 @@ static WOLFSSH_CTX *s_ctx = nullptr;
 
 static StaticTask_t s_ssh_task_buf;
 static StackType_t *s_ssh_task_stack = nullptr;
-#define K85_SSH_STACK_WORDS 6144
+// ВАЖНО: на ESP-IDF FreeRTOS-порте StackType_t == uint8_t, а usStackDepth
+// в xTaskCreate*/heap_caps_malloc задаётся в БАЙТАХ (не в словах, в отличие
+// от vanilla FreeRTOS!). Раньше здесь было 6144 * sizeof(StackType_t), что
+// при sizeof(StackType_t)==1 давало РЕАЛЬНЫЙ стек всего 6144 байт вместо
+// задуманных 24576 — отсюда и просадка после перехода на раннюю резервацию.
+static_assert(sizeof(StackType_t) == 1,
+    "StackType_t не uint8_t на этой платформе — пересчитай K85_SSH_STACK_BYTES!");
+#define K85_SSH_STACK_BYTES 12288  // 12 KB с запасом под fp_int-цепочку wolfCrypt
 
-__attribute__((constructor))
-static void k85_ssh_reserve_stack_early(void) {
+// (constructor убран, вызывается явно из app_main)
+void k85_ssh_reserve_stack_early(void) {
     s_ssh_task_stack = (StackType_t *)heap_caps_malloc(
-        K85_SSH_STACK_WORDS * sizeof(StackType_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        K85_SSH_STACK_BYTES, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 }
 
 // ---------- ????-???? (ECDSA P-256), ???????????? ???? ???, ???????? ? LittleFS ----------
@@ -304,7 +312,7 @@ static void handle_ssh_session(WOLFSSH *ssh) {
             if (!strcmp(line, "exit")) break;
 
             char resp[160];
-            build_command_response(line, resp, sizeof(resp));
+            k85_shell_run_command(line, resp, sizeof(resp));
             if (resp[0]) wolfSSH_stream_send(ssh, (byte *)resp, strlen(resp));
 
             bool do_reboot = !strcmp(line, "reboot");
@@ -388,11 +396,12 @@ static void ssh_server_task(void *arg) {
 
         wolfSSH_set_fd(ssh, conn_fd);
 
-        if (wolfSSH_accept(ssh) == WS_SUCCESS) {
+        int accept_ret = wolfSSH_accept(ssh);
+        if (accept_ret == WS_SUCCESS) {
             k85_log("ssh: client authenticated, session started");
             handle_ssh_session(ssh);
         } else {
-            k85_log("ssh: handshake/auth failed");
+            k85_log("ssh: handshake/auth failed, wolfSSH code=%d", accept_ret);
         }
 
         wolfSSH_stream_exit(ssh, 0);
@@ -410,6 +419,7 @@ static void ssh_server_task(void *arg) {
 }
 
 K85SshStartResult k85_ssh_server_start(void) {
+    wolfSSH_Debugging_ON(); // временно, для диагностики "-1001" — снять после отладки
     if (s_ssh_task) {
         k85_log("ssh: start requested but already running/stuck");
         return K85_SSH_START_ALREADY_RUNNING;
@@ -426,7 +436,7 @@ K85SshStartResult k85_ssh_server_start(void) {
         return K85_SSH_START_TASK_FAILED;
     }
     s_ssh_task = xTaskCreateStaticPinnedToCore(
-        ssh_server_task, "k85_ssh", K85_SSH_STACK_WORDS, nullptr, 5,
+        ssh_server_task, "k85_ssh", K85_SSH_STACK_BYTES, nullptr, 5,
         s_ssh_task_stack, &s_ssh_task_buf, tskNO_AFFINITY);
     BaseType_t ok = (s_ssh_task != nullptr) ? pdPASS : pdFAIL;
     if (ok != pdPASS) {

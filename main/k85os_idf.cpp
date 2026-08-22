@@ -19,6 +19,8 @@
 #include "net/ota.h"
 #include "core/post_beep.h"
 #include "net/wifi.h"
+#include "net/ssh_server.h"
+#include "core/heavy_lock.h"
 #include "core/status_bar.h"
 #include "esp_ota_ops.h"
 using namespace k85;
@@ -66,6 +68,8 @@ extern "C" void app_main(void) {
     k85_themes_load_custom();
     k85_log("Config loaded");
 
+    k85_ssh_reserve_stack_early();
+    k85_heavy_lock_init(); // резервируем стек под SSH-таск заранее, littlefs уже готов
     k85_rtc_ntp_init();
     k85_post_report_check(post_report, PostCode::RTC_TIME_FAIL, k85_rtc_is_present());
 
