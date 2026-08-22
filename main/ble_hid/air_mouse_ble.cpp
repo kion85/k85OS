@@ -4,6 +4,8 @@
 #include "power.h"
 #include "input.h"
 #include "common.h"
+#include "../net/wifi.h"
+#include "../core/config.h"
 
 #include "M5Unified.h"
 #include "freertos/FreeRTOS.h"
@@ -99,6 +101,11 @@ static bool k85_hid_stack_init(void) {
     }
 
     if (esp_bt_controller_get_status() == ESP_BT_CONTROLLER_STATUS_IDLE) {
+        // Освобождаем память под Classic BT — используется только BLE,
+        // а держать резерв под классику (десятки КБ internal RAM) смысла нет.
+        // Именно нехватка internal RAM в этот момент роняла esp_bt_controller_enable
+        // с "Malloc failed" -> Guru Meditation.
+        esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
         esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
         if (esp_bt_controller_init(&bt_cfg) != ESP_OK) return false;
     }
@@ -132,6 +139,11 @@ static bool k85_hid_stack_init(void) {
 }
 
 void k85_run_air_mouse_ble(void) {
+    // Освобождаем internal RAM от WiFi-драйвера перед BLE-инициализацией —
+    // без этого BLE-контроллер может уронить CORRUPT HEAP из-за
+    // фрагментации памяти (WiFi+BLE вместе тесно на этой памяти).
+    k85_wifi_stop();
+
     if (!k85_hid_stack_init()) {
         k85_show_message("BLE HID init\nfailed");
         vTaskDelay(pdMS_TO_TICKS(1500));
@@ -174,6 +186,17 @@ void k85_run_air_mouse_ble(void) {
         k85_input_update();
         if (k85_ab_held(500)) {
             k85_wait_ab_release();
+
+            // Полностью гасим BT перед восстановлением WiFi — иначе BT-стек
+            // продолжает держать internal RAM, и повторный k85_wifi_init()
+            // падает.
+            esp_bluedroid_disable();
+            esp_bluedroid_deinit();
+            esp_bt_controller_disable();
+            esp_bt_controller_deinit();
+            s_hid_inited = false;
+
+            if (!g_config.wifi_disabled) k85_wifi_init();
             return;
         }
         if (s_connected != last_connected) {

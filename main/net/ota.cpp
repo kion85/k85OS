@@ -1,4 +1,5 @@
 ﻿#include "ota.h"
+#include "core/heavy_lock.h"
 #include "../core/version.h"
 #include "../core/notifications.h"
 #include "wifi.h"
@@ -177,8 +178,18 @@ static void ota_check_task(void *arg) {
     char ver[16];
     char url[256];
 
+    // Не бьём в сеть сразу после старта — даём системе "устояться" и не
+    // конкурируем за internal RAM с тем, что пользователь обычно включает
+    // в первые секунды после загрузки (например, SSH-сервер).
+    vTaskDelay(pdMS_TO_TICKS(60000));
+
     while (true) {
         if (!k85_wifi_is_connected()) {
+            vTaskDelay(pdMS_TO_TICKS(s_interval_ms));
+            continue;
+        }
+        K85HeavyLockGuard heavy_lock(15000);
+        if (!heavy_lock.held) {
             vTaskDelay(pdMS_TO_TICKS(s_interval_ms));
             continue;
         }

@@ -16,7 +16,7 @@
 #include <cstring>
 #include <cmath>
 
-#define K85_FW_VERSION "5.0"
+#define K85_FW_VERSION "5.3"
 #define K85_BOOT_DURATION_MS 4000
 #define K85_BOOT_MENU_TIMEOUT_MS 3000
 
@@ -25,12 +25,15 @@ const char *k85_boot_style_names[K85_BOOT_STYLE_COUNT] = {
 };
 
 static K85BootTheme s_boot_theme;
+static bool try_draw_custom_logo(const K85BootTheme &theme);
 
 static int boot_draw_title(void) {
     int W = M5.Display.width();
     int H = M5.Display.height();
     uint32_t bg = s_boot_theme.bg;
     uint32_t accent = s_boot_theme.accent;
+
+    if (try_draw_custom_logo(s_boot_theme)) return H / 2 - 30;
 
     M5.Display.fillScreen(bg);
 
@@ -155,11 +158,32 @@ static void draw_capybara_logo(int cx, int cy) {
 }
 
 #define K85_LOGO_DURATION_MS 1000
+#define K85_CUSTOM_LOGO_PATH "/littlefs/boot_logo.jpg"
+
+// Пользователь может залить свою картинку через веб-файловый менеджер
+// (Tools -> WiFi Hotspot -> веб-интерфейс), назвав файл boot_logo.jpg
+// в корне LittleFS — тогда она используется вместо капибары.
+static bool try_draw_custom_logo(const K85BootTheme &theme) {
+    FILE *f = fopen(K85_CUSTOM_LOGO_PATH, "rb");
+    if (!f) return false;
+    fclose(f);
+
+    int W = M5.Display.width();
+    int H = M5.Display.height();
+    M5.Display.fillScreen(theme.bg);
+    bool ok = M5.Display.drawJpgFile(K85_CUSTOM_LOGO_PATH, 0, 0, W, H, 0, 0, lgfx::jpeg_div::JPEG_DIV_NONE);
+    return ok;
+}
+
 static void show_pre_boot_logo(const K85BootTheme &theme) {
     int W = M5.Display.width();
     int H = M5.Display.height();
 
     M5.Display.fillScreen(theme.bg);
+    if (try_draw_custom_logo(theme)) {
+        vTaskDelay(pdMS_TO_TICKS(K85_LOGO_DURATION_MS));
+        return;
+    }
     draw_capybara_logo(W / 2, H / 2 - 10);
 
     M5.Display.setTextSize(1);

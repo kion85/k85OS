@@ -18,6 +18,7 @@ int k85_wifi_scan(char ssids_out[][33], int max_results);
 
 // Отключение / выключение радио
 void k85_wifi_disconnect(void);
+void k85_wifi_stop(void); // полная остановка драйвера, освобождает internal RAM (для k85_wifi_init() снова поднять)
 
 bool k85_wifi_is_connected(void);
 

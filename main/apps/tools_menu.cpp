@@ -19,11 +19,12 @@
 #include "tools/bt_scan.h"
 #include "tools/terminal.h"
 #include "tools/ir_remote.h"
+#include "../net/ssh_client.h"
 
 static const char *TOOLS_ITEMS[] = {
     "WiFi Manager", "Color Test", "Bluetooth Scan", "I2C Scanner",
     "GPIO Control", "Files", "Music Player", "Melodies", "Mic Test",
-    "Air Mouse (screen)", "Air Mouse BLE", "WiFi Hotspot", "Calculator", "Terminal", "IR Remote", "Back"
+    "Air Mouse (screen)", "Air Mouse BLE", "WiFi Hotspot", "Calculator", "Terminal", "IR Remote", "SSH Connect", "Back"
 };
 #define TOOLS_COUNT (int)(sizeof(TOOLS_ITEMS) / sizeof(TOOLS_ITEMS[0]))
 
@@ -67,6 +68,14 @@ void k85_run_tools_menu(void) {
         else if (idx == 12) k85_run_calculator();
         else if (idx == 13) { if (k85_run_terminal()) return; }
         else if (idx == 14) k85_run_ir_remote();
+        else if (idx == 15) {
+            if (g_config.wifi_disabled) {
+                k85_show_message("WiFi disabled\n(k85os-menu)");
+                vTaskDelay(pdMS_TO_TICKS(1000));
+            } else {
+                k85_run_ssh_client();
+            }
+        }
     }
 }
 

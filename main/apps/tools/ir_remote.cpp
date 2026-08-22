@@ -301,6 +301,47 @@ static bool decode_nec(rmt_symbol_word_t *symbols, uint32_t *out_raw) {
     return true;
 }
 
+// ---------- Generic noise-tolerant symbol comparison ----------
+// Сравнивает два последовательных RMT-захвата: одиночный шум почти никогда
+// не повторяется дважды с одинаковыми таймингами, а настоящий пульт при
+// нажатии кнопки шлёт серию повторов — это и есть критерий "реальный сигнал".
+static bool symbols_similar(rmt_symbol_word_t *a, size_t na, rmt_symbol_word_t *b, size_t nb) {
+    if (na != nb || na < 4) return false;
+    const int32_t TOL_US = 200;
+    for (size_t i = 0; i < na; i++) {
+        if (abs((int32_t)a[i].duration0 - (int32_t)b[i].duration0) > TOL_US) return false;
+        if (abs((int32_t)a[i].duration1 - (int32_t)b[i].duration1) > TOL_US) return false;
+    }
+    return true;
+}
+
+// ---------- SIRC decode (для live-скана) ----------
+static bool decode_sirc(rmt_symbol_word_t *symbols, size_t num, uint16_t *out_address, uint16_t *out_command) {
+    if (num < 13) return false;
+    uint32_t header_mark = symbols[0].duration0;
+    uint32_t header_space = symbols[0].duration1;
+    if (!(header_mark > 2000 && header_mark < 2800 && header_space > 400 && header_space < 800)) return false;
+    uint16_t data = 0;
+    for (int i = 0; i < 12; i++) {
+        uint32_t mark = symbols[i + 1].duration0;
+        if (mark > 900) data |= (1U << i);
+    }
+    *out_command = data & 0x7F;
+    *out_address = (data >> 7) & 0x1F;
+    return true;
+}
+
+// Ищет известную "функцию" (бренд + кнопку) по декодированному коду в базе.
+static const K85IrBrandCode *match_brand(K85IrProtocol proto, uint16_t address, uint16_t command) {
+    for (int i = 0; i < K85_IR_BRAND_COUNT; i++) {
+        if (K85_IR_BRAND_DB[i].protocol == proto &&
+            K85_IR_BRAND_DB[i].address == address &&
+            K85_IR_BRAND_DB[i].command == command) {
+            return &K85_IR_BRAND_DB[i];
+        }
+    }
+    return nullptr;
+}
 // ---------- Storage ----------
 static int load_codes(K85IrCode out[], int max_out) {
     FILE *f = fopen(K85_IR_FILE, "r");
@@ -462,6 +503,98 @@ static void run_ir_learn(void) {
     wait_ab_exit();
 }
 
+// ---------- UI: Live Scan — шум игнорируется, на экран выводится только
+// сигнал, повторившийся 2 раза подряд с одинаковыми таймингами (так делает
+// настоящий пульт при нажатии кнопки). A+B — выход.
+static void run_ir_live_scan(void) {
+    M5.Display.fillScreen(0x000000);
+    M5.Display.setTextSize(1);
+
+    rmt_symbol_word_t prev_symbols[64];
+    size_t prev_count = 0;
+    bool have_prev = false;
+    uint32_t total_seen = 0;
+    uint32_t last_heartbeat = 0;
+
+    char result_line1[64] = "Пульт ещё не пойман";
+    char result_line2[64] = "";
+    char result_line3[64] = "";
+
+    auto redraw = [&]() {
+        M5.Display.fillScreen(0x000000);
+        M5.Display.setTextColor(0x07FF, 0x000000);
+        M5.Display.setCursor(4, 4);
+        M5.Display.println("Ожидание сигнала...");
+        M5.Display.setCursor(4, 20);
+        M5.Display.printf("Захватов: %lu", (unsigned long)total_seen);
+
+        M5.Display.setTextColor(0x07E0, 0x000000);
+        M5.Display.setCursor(4, 60);
+        M5.Display.println(result_line1);
+        M5.Display.setCursor(4, 76);
+        M5.Display.println(result_line2);
+        M5.Display.setCursor(4, 92);
+        M5.Display.println(result_line3);
+
+        M5.Display.setTextColor(0xFFFF, 0x000000);
+        M5.Display.setCursor(4, 130);
+        M5.Display.println("A+B = выход");
+    };
+
+    redraw();
+    start_rmt_receive();
+
+    while (true) {
+        k85_input_update();
+        if (k85_ab_held(500)) { k85_wait_ab_release(); return; }
+
+        uint32_t now = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+        if (now - last_heartbeat > 1000) {
+            last_heartbeat = now;
+            redraw();
+        }
+
+        if (s_rx_done) {
+            s_rx_done = false;
+            size_t cur_count = s_rx_symbol_num;
+            total_seen++;
+
+            bool is_real = have_prev && symbols_similar(prev_symbols, prev_count, s_rx_symbols, cur_count);
+
+            if (is_real) {
+                uint32_t nec_raw_val = 0;
+                uint16_t sirc_addr = 0, sirc_cmd = 0;
+
+                if (cur_count >= 33 && decode_nec(s_rx_symbols, &nec_raw_val)) {
+                    uint16_t addr = nec_raw_val & 0xFFFF;
+                    uint8_t cmd = (nec_raw_val >> 16) & 0xFF;
+                    const K85IrBrandCode *m = match_brand(IR_PROTO_NEC, addr, cmd);
+                    if (!m) m = match_brand(IR_PROTO_SAMSUNG32, addr, cmd);
+                    snprintf(result_line1, sizeof(result_line1), "Протокол: NEC/Samsung");
+                    snprintf(result_line2, sizeof(result_line2), "Код: A:%04X C:%02X", addr, cmd);
+                    snprintf(result_line3, sizeof(result_line3), "Функция: %s", m ? m->name : "неизвестна");
+                } else if (decode_sirc(s_rx_symbols, cur_count, &sirc_addr, &sirc_cmd)) {
+                    const K85IrBrandCode *m = match_brand(IR_PROTO_SIRC, sirc_addr, sirc_cmd);
+                    snprintf(result_line1, sizeof(result_line1), "Протокол: Sony SIRC");
+                    snprintf(result_line2, sizeof(result_line2), "Код: A:%02X C:%02X", sirc_addr, sirc_cmd);
+                    snprintf(result_line3, sizeof(result_line3), "Функция: %s", m ? m->name : "неизвестна");
+                } else {
+                    snprintf(result_line1, sizeof(result_line1), "Протокол: неизвестен");
+                    snprintf(result_line2, sizeof(result_line2), "Импульсов: %u", (unsigned)cur_count);
+                    snprintf(result_line3, sizeof(result_line3), "Сигнал реальный (повтор совпал)");
+                }
+                redraw();
+            }
+
+            memcpy(prev_symbols, s_rx_symbols, cur_count * sizeof(rmt_symbol_word_t));
+            prev_count = cur_count;
+            have_prev = true;
+
+            start_rmt_receive();
+        }
+        vTaskDelay(pdMS_TO_TICKS(15));
+    }
+}
 // ---------- UI: Delete ----------
 static void run_ir_delete(void) {
     K85IrCode codes[K85_IR_MAX_CODES];

@@ -1,4 +1,4 @@
-idf_component_register(
+﻿idf_component_register(
     SRCS "k85os_idf.cpp"
          "core/config.cpp"
          "core/theme.cpp"
@@ -57,6 +57,10 @@ idf_component_register(
          "net/firmware_flash.cpp"
          "net/router.cpp"
          "net/ssh_server.cpp"
+         "net/ssh_mem_alloc.c"
+         "net/ssh_client.cpp"
+         "core/shell_commands.cpp"
+         "core/heavy_lock.cpp"
          "apps/k85os_menu.cpp"
          "apps/test_mode.cpp"
          "net/ota.cpp"
@@ -74,6 +78,11 @@ idf_component_register(
     PRIV_REQUIRES json esp_netif esp_driver_tsens esp_wifi nvs_flash esp_event esp_driver_i2c esp_driver_gpio bt esp_driver_rmt esp_https_ota esp_http_client app_update mbedtls esp-libhelix-mp3 mbedtls wolfssl wolfssh esp_psram
 )
 
+# Форсируем линкер считать XMALLOC/XFREE/XREALLOC нужными символами с самого
+# начала — иначе во втором линковочном проходе wolfssl__wolfssh.a пулит их
+# как undefined, а libmain.a (где реализация в ssh_mem_alloc.c) во втором
+# проходе уже не сканируется повторно, и связь не разрешается.
+target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,-u,XMALLOC" "-Wl,-u,XFREE" "-Wl,-u,XREALLOC")
 set_source_files_properties(
     "ble_hid/hid_dev.c"
     "ble_hid/hid_device_le_prf.c"

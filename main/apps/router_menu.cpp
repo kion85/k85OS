@@ -1,4 +1,4 @@
-#pragma GCC diagnostic push
+﻿#pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat-truncation"
 
 #include "router_menu.h"
@@ -265,6 +265,10 @@ static void handle_router_connection(int conn_fd, const char *ssid, bool is_gues
         send_redirect(conn_fd, redir);
     } else {
         static char *body = (char *)heap_caps_malloc(6144, MALLOC_CAP_SPIRAM);
+        if (!body) {
+            ESP_LOGE("k85_web", "router_menu: body alloc failed (PSRAM OOM?)");
+            return;
+        }
         build_status_page(body, 6144, ssid, is_guest);
         send_response(conn_fd, "200 OK", body);
     }

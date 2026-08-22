@@ -1,10 +1,12 @@
-#include "logs_screen.h"
+﻿#include "logs_screen.h"
 #include "theme.h"
 #include "power.h"
 #include "input.h"
 #include "log.h"
 
 #include "M5Unified.h"
+#include <cstring>
+#include <cstdio>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -15,6 +17,7 @@ static void render(int offset) {
 
     M5.Display.fillScreen(bg);
     M5.Display.setTextSize(1);
+    M5.Display.setTextWrap(false);
     M5.Display.setTextColor(fg, bg);
     M5.Display.setCursor(4, 4);
     M5.Display.print("System log:");
@@ -22,7 +25,11 @@ static void render(int offset) {
     int y = 18;
     for (int i = offset; i < offset + 8 && i < count; i++) {
         M5.Display.setCursor(4, y);
-        M5.Display.print(k85_log_get(i));
+        char buf[65];
+        snprintf(buf, sizeof(buf), "%s", k85_log_get(i));
+        int max_chars = (M5.Display.width() - 8) / 6;
+        if (max_chars > 0 && (int)strlen(buf) > max_chars) buf[max_chars] = 0;
+        M5.Display.print(buf);
         y += 12;
     }
 

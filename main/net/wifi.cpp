@@ -1,4 +1,4 @@
-#include "wifi.h"
+﻿#include "wifi.h"
 #include "config.h"
 #include "log.h"
 #include "notifications.h"
@@ -18,9 +18,13 @@ static EventGroupHandle_t s_wifi_event_group = nullptr;
 static const int WIFI_CONNECTED_BIT = BIT0;
 static const int WIFI_FAIL_BIT      = BIT1;
 
-static bool s_inited = false;
+static bool s_inited = false;         // драйвер сейчас активен (между init и stop/deinit)
+static bool s_netif_created = false;  // netif/event loop создаются один раз за всё время жизни прошивки
 static bool s_connected = false;
 static esp_netif_t *s_netif = nullptr;
+
+static esp_event_handler_instance_t s_wifi_evt_instance = nullptr;
+static esp_event_handler_instance_t s_ip_evt_instance = nullptr;
 
 static void wifi_event_handler(void *arg, esp_event_base_t event_base,
                                 int32_t event_id, void *event_data) {
@@ -49,17 +53,31 @@ void k85_wifi_init(void) {
         nvs_err = nvs_flash_init();
     }
 
-    esp_netif_init();
-    esp_event_loop_create_default();
-    s_netif = esp_netif_create_default_wifi_sta();
+    // netif и дефолтный event loop создаются один раз за всё время жизни
+    // прошивки — пересоздавать их на каждый init/deinit цикл нельзя (это
+    // не то, что реально освобождает esp_wifi_deinit(), а отдельные
+    // сущности, которые просто незачем плодить повторно).
+    if (!s_netif_created) {
+        esp_netif_init();
+        esp_event_loop_create_default();
+        s_netif = esp_netif_create_default_wifi_sta();
+        s_netif_created = true;
+    }
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     esp_wifi_init(&cfg);
 
-    esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
-                                         &wifi_event_handler, nullptr, nullptr);
-    esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
-                                         &wifi_event_handler, nullptr, nullptr);
+    // Регистрируем обработчики событий только если их ещё нет (после
+    // k85_wifi_stop() они снимаются и обнуляются — иначе тут задвоились бы
+    // при каждом повторном включении WiFi).
+    if (!s_wifi_evt_instance) {
+        esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
+                                             &wifi_event_handler, nullptr, &s_wifi_evt_instance);
+    }
+    if (!s_ip_evt_instance) {
+        esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
+                                             &wifi_event_handler, nullptr, &s_ip_evt_instance);
+    }
 
     esp_wifi_set_mode(WIFI_MODE_STA);
     esp_wifi_start();
@@ -67,7 +85,7 @@ void k85_wifi_init(void) {
     s_inited = true;
 }
 
-// ????? ??????????? ?????? ??????????? ? ???????????? ? connect_saved, ? connect
+// общая функция подключения, используется и в connect_saved, и в connect
 static bool wifi_do_connect(const char *ssid, const char *password) {
     if (!s_inited) k85_wifi_init();
     if (!s_wifi_event_group) s_wifi_event_group = xEventGroupCreate();
@@ -105,7 +123,7 @@ int k85_wifi_scan(char ssids_out[][33], int max_results) {
 
     wifi_scan_config_t scan_config = {};
     scan_config.show_hidden = false;
-    esp_err_t err = esp_wifi_scan_start(&scan_config, true); // ??????????? ????
+    esp_err_t err = esp_wifi_scan_start(&scan_config, true); // блокирующее сканирование
     if (err != ESP_OK) {
         k85_log("WiFi scan failed");
         return 0;
@@ -123,7 +141,7 @@ int k85_wifi_scan(char ssids_out[][33], int max_results) {
     for (int i = 0; i < ap_count && n < max_results; i++) {
         const char *ssid = (const char *)records[i].ssid;
         if (ssid[0] == 0) continue;
-        // ?????????? ????????? SSID (????????? ????? ? ????? ??????)
+        // отфильтровываем дубликаты SSID (несколько точек с одной сетью)
         bool dup = false;
         for (int j = 0; j < n; j++) if (!strcmp(ssids_out[j], ssid)) { dup = true; break; }
         if (dup) continue;
@@ -137,6 +155,31 @@ int k85_wifi_scan(char ssids_out[][33], int max_results) {
 void k85_wifi_disconnect(void) {
     esp_wifi_disconnect();
     s_connected = false;
+}
+
+// Полная остановка И деинициализация драйвера WiFi. esp_wifi_stop() САМ ПО
+// СЕБЕ НЕ освобождает internal RAM — драйвер держит свои буферы вплоть до
+// esp_wifi_deinit(). Именно это было причиной, почему BLE всё равно падал
+// с "Malloc failed" даже после k85_wifi_stop(): драйвер был остановлен, но
+// память так и не освободилась. Снимаем также обработчики событий, чтобы
+// следующий k85_wifi_init() не зарегистрировал их повторно поверх старых.
+void k85_wifi_stop(void) {
+    if (!s_inited) return;
+
+    esp_wifi_stop();
+    esp_wifi_deinit();
+
+    if (s_wifi_evt_instance) {
+        esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, s_wifi_evt_instance);
+        s_wifi_evt_instance = nullptr;
+    }
+    if (s_ip_evt_instance) {
+        esp_event_handler_instance_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, s_ip_evt_instance);
+        s_ip_evt_instance = nullptr;
+    }
+
+    s_connected = false;
+    s_inited = false;
 }
 
 bool k85_wifi_is_connected(void) { return s_connected; }
@@ -164,6 +207,3 @@ int k85_wifi_get_rssi(void) {
     }
     return 0;
 }
-
-
-
