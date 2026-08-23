@@ -3,6 +3,7 @@
 #include "esp_https_ota.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
+#include "core/heavy_lock.h"
 #include "esp_ota_ops.h"
 #include "esp_log.h"
 #include "cJSON.h"
@@ -145,12 +146,15 @@ bool k85_fwflash_list_available(char out_names[][64], char out_urls[][256], int 
 }
 
 bool k85_fwflash_from_url(const char *url, k85_fwflash_progress_cb cb) {
+    K85HeavyLockGuard heavy_lock(20000);
+    if (!heavy_lock.held) return false;
+
     if (!k85_fwflash_stream_begin()) return false;
 
     esp_http_client_config_t cfg = {};
     cfg.url = url;
     cfg.crt_bundle_attach = esp_crt_bundle_attach;
-    cfg.timeout_ms = 15000;
+    cfg.timeout_ms = 30000;
 
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
     if (!client) { k85_fwflash_stream_abort(); return false; }

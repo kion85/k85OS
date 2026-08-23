@@ -1,4 +1,4 @@
-#include "menu.h"
+﻿#include "menu.h"
 #include "common.h"
 #include "theme.h"
 #include "battery.h"
@@ -27,6 +27,7 @@
 
 #include <cstring>
 #include <cstdio>
+#include <cmath>
 
 static const char *const K85_MENU_ITEMS[] = {
     "Low tone", "High tone", "Both tones", "Cube", "Colors",
@@ -81,16 +82,87 @@ void k85_menu_init(void) {
     s_scroll_offset = 0;
 }
 
-void k85_menu_draw(void) {
+static void draw_menu_icon(int cx, int cy, int r, const char *name, uint32_t col) {
+    auto &d = M5.Display;
+    if (!strcmp(name, "Low tone") || !strcmp(name, "High tone") || !strcmp(name, "Both tones")) {
+        d.fillRect(cx - r, cy - r/2, r/2, r, col);
+        d.fillTriangle(cx - r/2, cy - r, cx - r/2, cy + r, cx + r/4, cy, col);
+        int waves = !strcmp(name, "Low tone") ? 1 : (!strcmp(name, "High tone") ? 2 : 3);
+        for (int i = 0; i < waves; i++) {
+            int off = r/2 + i * 3;
+            d.drawLine(cx + r/3, cy - off/2, cx + r/3 + off/2, cy - off, col);
+            d.drawLine(cx + r/3, cy + off/2, cx + r/3 + off/2, cy + off, col);
+        }
+    } else if (!strcmp(name, "Cube")) {
+        int s = r;
+        d.drawRect(cx - s, cy - s/2, s, s, col);
+        d.drawRect(cx - s + s/3, cy - s/2 - s/3, s, s, col);
+        d.drawLine(cx - s, cy - s/2, cx - s + s/3, cy - s/2 - s/3, col);
+        d.drawLine(cx, cy - s/2, cx + s/3, cy - s/2 - s/3, col);
+        d.drawLine(cx - s, cy + s/2, cx - s + s/3, cy + s/2 - s/3, col);
+        d.drawLine(cx, cy + s/2, cx + s/3, cy + s/2 - s/3, col);
+    } else if (!strcmp(name, "Colors")) {
+        d.fillCircle(cx - r/2, cy - r/3, r/3, 0xFF0000);
+        d.fillCircle(cx + r/2, cy - r/3, r/3, 0x00FF00);
+        d.fillCircle(cx, cy + r/3, r/3, 0x0000FF);
+    } else if (!strcmp(name, "Clock")) {
+        d.drawCircle(cx, cy, r, col);
+        d.drawLine(cx, cy, cx, cy - r + 2, col);
+        d.drawLine(cx, cy, cx + r/2, cy, col);
+    } else if (!strcmp(name, "WiFi")) {
+        d.fillRect(cx - r/2, cy + r/2 - 2, 3, 3, col);
+        d.fillRect(cx - r/6, cy + r/4 - 2, 3, r/2, col);
+        d.fillRect(cx + r/6, cy - 2, 3, r - 2, col);
+    } else if (!strcmp(name, "Apps")) {
+        int s = r/2 - 1;
+        d.fillRect(cx - r/2, cy - r/2, s, s, col);
+        d.fillRect(cx + 2, cy - r/2, s, s, col);
+        d.fillRect(cx - r/2, cy + 2, s, s, col);
+        d.fillRect(cx + 2, cy + 2, s, s, col);
+    } else if (!strcmp(name, "Tools")) {
+        d.fillCircle(cx - r/2, cy - r/2, r/3, col);
+        d.drawLine(cx - r/2, cy - r/2, cx + r/2, cy + r/2, col);
+        d.drawLine(cx - r/2 + 1, cy - r/2, cx + r/2 + 1, cy + r/2, col);
+    } else if (!strcmp(name, "Games")) {
+        d.fillRoundRect(cx - r, cy - r/2, r * 2, r, r/3, col);
+        d.fillCircle(cx + r/2, cy, 2, 0x000000);
+        d.fillCircle(cx + r/2 + 5, cy - 3, 2, 0x000000);
+    } else if (!strcmp(name, "Settings")) {
+        d.fillCircle(cx, cy, r/2, col);
+        for (int a = 0; a < 360; a += 45) {
+            float rad = a * 3.14159f / 180.0f;
+            int x1 = cx + (int)(cosf(rad) * (r/2));
+            int y1 = cy + (int)(sinf(rad) * (r/2));
+            int x2 = cx + (int)(cosf(rad) * r);
+            int y2 = cy + (int)(sinf(rad) * r);
+            d.drawLine(x1, y1, x2, y2, col);
+        }
+    } else if (!strcmp(name, "System info")) {
+        d.drawCircle(cx, cy, r, col);
+        d.fillRect(cx - 1, cy - r/3, 2, r/3, col);
+        d.fillRect(cx - 1, cy - r/2 - 2, 2, 2, col);
+    } else if (!strcmp(name, "Logs")) {
+        d.drawFastHLine(cx - r, cy - r/2, r * 2 - r/3, col);
+        d.drawFastHLine(cx - r, cy, r * 2, col);
+        d.drawFastHLine(cx - r, cy + r/2, r * 2 - r/2, col);
+    } else if (!strcmp(name, "Notifications")) {
+        d.fillCircle(cx, cy - 2, r/2, col);
+        d.fillRect(cx - r/4, cy + r/3, r/2, 2, col);
+        d.drawCircle(cx, cy - r - 1, 2, col);
+    } else {
+        d.fillCircle(cx, cy, r/3, col);
+    }
+}
+
+static void draw_menu_grid(void);
+static void draw_menu_list(void) {
     const char *items[K85_MENU_ITEM_COUNT];
     int count = get_filtered_menu(items, K85_MENU_ITEM_COUNT);
-
     uint32_t bg = k85_get_bg();
     uint32_t fg = k85_get_fg();
     uint32_t accent = k85_get_accent();
     int w = M5.Display.width();
     int h = M5.Display.height();
-
     if (count == 0) {
         draw_menu_background(bg, accent);
         M5.Display.setTextSize(2);
@@ -100,31 +172,25 @@ void k85_menu_draw(void) {
         k85_status_bar_draw();
         return;
     }
-
     if (s_selected >= count) s_selected = count - 1;
     if (s_selected < 0) s_selected = 0;
-
     draw_menu_background(bg, accent);
     M5.Display.setTextSize(2);
     const int line_h = 26;
     const int start_y = 14;
     int visible_count = (h - start_y) / line_h;
     if (visible_count < 1) visible_count = 1;
-
     if (s_selected < s_scroll_offset) {
         s_scroll_offset = s_selected;
     } else if (s_selected >= s_scroll_offset + visible_count) {
         s_scroll_offset = s_selected - visible_count + 1;
     }
-
     int max_scroll = count - visible_count;
     if (max_scroll < 0) max_scroll = 0;
     if (s_scroll_offset > max_scroll) s_scroll_offset = max_scroll;
     if (s_scroll_offset < 0) s_scroll_offset = 0;
-
     int end_index = s_scroll_offset + visible_count;
     if (end_index > count) end_index = count;
-
     for (int i = s_scroll_offset; i < end_index; i++) {
         int yy = start_y + (i - s_scroll_offset) * line_h;
         if (i == s_selected) {
@@ -137,7 +203,6 @@ void k85_menu_draw(void) {
             M5.Display.printf(" %s", items[i]);
         }
     }
-
     M5.Display.setTextSize(1);
     M5.Display.setTextColor(0xAAAAAA, bg);
     if (s_scroll_offset > 0) {
@@ -148,10 +213,87 @@ void k85_menu_draw(void) {
         M5.Display.setCursor(w - 14, h - 12);
         M5.Display.print("v");
     }
-
     k85_status_bar_draw();
 }
 
+void k85_menu_draw(void) {
+    if (g_config.menu_grid_ui_enabled) draw_menu_grid();
+    else draw_menu_list();
+}
+static void draw_menu_grid(void) {
+    const char *items[K85_MENU_ITEM_COUNT];
+    int count = get_filtered_menu(items, K85_MENU_ITEM_COUNT);
+    uint32_t bg = k85_get_bg();
+    uint32_t fg = k85_get_fg();
+    uint32_t accent = k85_get_accent();
+    int w = M5.Display.width();
+    int h = M5.Display.height();
+    if (count == 0) {
+        draw_menu_background(bg, accent);
+        M5.Display.setTextSize(2);
+        M5.Display.setTextColor(fg, bg);
+        M5.Display.setCursor(10, h / 2 - 8);
+        M5.Display.print("No items");
+        k85_status_bar_draw();
+        return;
+    }
+    if (s_selected >= count) s_selected = count - 1;
+    if (s_selected < 0) s_selected = 0;
+
+    draw_menu_background(bg, accent);
+
+    const int cols = 4;
+    const int rows = 2;
+    const int per_page = cols * rows;
+    const int start_y = 16;
+    int grid_h = h - start_y - 10;
+    int cell_w = w / cols;
+    int cell_h = grid_h / rows;
+
+    int page = s_selected / per_page;
+    int page_count = (count + per_page - 1) / per_page;
+    int page_start = page * per_page;
+    int page_end = page_start + per_page;
+    if (page_end > count) page_end = count;
+
+    for (int i = page_start; i < page_end; i++) {
+        int local = i - page_start;
+        int col = local % cols;
+        int row = local / cols;
+        int cx = col * cell_w + cell_w / 2;
+        int cy = start_y + row * cell_h + cell_h / 2 - 6;
+
+        bool sel = (i == s_selected);
+        if (sel) {
+            M5.Display.fillRoundRect(col * cell_w + 3, start_y + row * cell_h + 2,
+                                      cell_w - 6, cell_h - 4, 6, accent);
+        }
+
+        draw_menu_icon(cx, cy, 12, items[i], sel ? 0x000000 : fg);
+
+        M5.Display.setTextSize(1);
+        M5.Display.setTextColor(sel ? 0x000000 : fg, sel ? accent : bg);
+        char short_label[16];
+        int max_chars = (cell_w - 4) / 6;
+        if (max_chars > 15) max_chars = 15;
+        if (max_chars < 1) max_chars = 1;
+        snprintf(short_label, sizeof(short_label), "%.*s", max_chars, items[i]);
+        int tx = col * cell_w + (cell_w - (int)strlen(short_label) * 6) / 2;
+        if (tx < col * cell_w) tx = col * cell_w + 1;
+        M5.Display.setCursor(tx, start_y + row * cell_h + cell_h - 12);
+        M5.Display.print(short_label);
+    }
+
+    M5.Display.setTextColor(0xAAAAAA, bg);
+    if (page_count > 1) {
+        char pg[32];
+        snprintf(pg, sizeof(pg), "%d/%d", page + 1, page_count);
+        M5.Display.setCursor(w - (int)strlen(pg) * 6 - 4, h - 10);
+        M5.Display.print(pg);
+    }
+
+    k85_status_bar_draw();
+}
 void k85_menu_next(void) {
     const char *items[K85_MENU_ITEM_COUNT];
     int count = get_filtered_menu(items, K85_MENU_ITEM_COUNT);

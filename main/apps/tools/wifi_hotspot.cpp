@@ -48,20 +48,22 @@ static void gen_random_string(char *out, int len, bool digits_only) {
 static void url_decode(const char *src, char *dst, size_t dst_size) {
     size_t di = 0;
     while (*src && di + 1 < dst_size) {
+        char decoded;
         if (*src == '%' && src[1] && src[2]) {
             char hex[3] = { src[1], src[2], 0 };
-            dst[di++] = (char)strtol(hex, nullptr, 16);
+            decoded = (char)strtol(hex, nullptr, 16);
             src += 3;
         } else if (*src == '+') {
-            dst[di++] = ' ';
+            decoded = ' ';
             src++;
         } else {
-            dst[di++] = *src++;
+            decoded = *src++;
         }
+        if (decoded == '\r' || decoded == '\n') continue;
+        dst[di++] = decoded;
     }
     dst[di] = 0;
 }
-
 static bool sanitize_relpath(const char *name) {
     if (!name[0]) return false;
     if (strstr(name, "..")) return false;

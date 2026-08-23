@@ -1,4 +1,4 @@
-#include "settings_menu.h"
+﻿#include "settings_menu.h"
 #include "config.h"
 #include "theme.h"
 #include "power.h"
@@ -26,13 +26,13 @@
 #include <cstdio>
 #include <cstddef>
 
-#define K85_SETTINGS_ITEM_COUNT 15
+#define K85_SETTINGS_ITEM_COUNT 16
 #define K85_SETTINGS_BACK_IDX   (K85_SETTINGS_ITEM_COUNT - 1)
 
 static const char *k85_settings_labels[K85_SETTINGS_ITEM_COUNT] = {
     "Theme", "Brightness", "Battery mode", "Boot style",
     "Device name", "Sound volume", "WiFi", "Reset steps",
-    "Check for updates", "Screen lock", "Status bar", "BG gradient", "Lock screen", "SSH Server", "Back",
+    "Check for updates", "Screen lock", "Status bar", "BG gradient", "Lock screen", "SSH Server", "Menu UI style", "Back",
 };
 
 static int s_selected = 0;
@@ -72,7 +72,8 @@ static void settings_value_str(char *out, size_t out_size, int idx) {
         case 11: snprintf(out, out_size, "%s", g_config.bg_gradient_enabled ? "ON" : "OFF"); break;
         case 12: out[0] = 0; break;
         case 13: snprintf(out, out_size, "%s", g_config.ssh_enabled ? "ON" : "OFF"); break;
-        case 14: out[0] = 0; break; // Back - ??? ????????
+        case 14: snprintf(out, out_size, "%s", g_config.menu_grid_ui_enabled ? "Grid" : "List"); break;
+        case 15: out[0] = 0; break; // Back
         default: out[0] = 0;
     }
 }
@@ -334,6 +335,9 @@ static void settings_apply_item(int idx) {
             ssh_done:
             break;
         }
+        case 14:
+            g_config.menu_grid_ui_enabled = !g_config.menu_grid_ui_enabled;
+            break;
         default:
             break;
     }

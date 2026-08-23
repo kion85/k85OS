@@ -120,6 +120,77 @@ bool k85_apprepo_fetch_uefi_theme_list(char out_names[][64], char out_urls[][256
     return found > 0;
 }
 
+bool k85_apprepo_fetch_app_list(char out_names[][64], char out_urls[][256], int max, int *out_count) {
+    *out_count = 0;
+
+    K85HeavyLockGuard heavy_lock(15000);
+    if (!heavy_lock.held) {
+        ESP_LOGW(TAG, "app fetch: heavy lock busy, skipping");
+        return false;
+    }
+
+    char url[160];
+    snprintf(url, sizeof(url), "https://api.github.com/repos/%s/%s/releases/tags/app",
+             K85_APPREPO_OWNER, K85_APPREPO_REPO);
+
+    #define K85_APPREPO_APP_JSON_BUF_SIZE 32768
+    static char *app_json_buf = nullptr;
+    if (!app_json_buf) {
+        app_json_buf = (char *)heap_caps_malloc(K85_APPREPO_APP_JSON_BUF_SIZE, MALLOC_CAP_SPIRAM);
+        if (!app_json_buf) return false;
+    }
+    HttpBuf buf = { app_json_buf, 0, K85_APPREPO_APP_JSON_BUF_SIZE };
+    app_json_buf[0] = 0;
+
+    esp_http_client_config_t cfg = {};
+    cfg.url = url;
+    cfg.event_handler = http_event_handler;
+    cfg.user_data = &buf;
+    cfg.crt_bundle_attach = esp_crt_bundle_attach;
+    cfg.timeout_ms = 20000;
+    cfg.user_agent = "k85OS-device";
+
+    esp_http_client_handle_t client = esp_http_client_init(&cfg);
+    if (!client) return false;
+
+    esp_err_t err = esp_http_client_perform(client);
+    int status = esp_http_client_get_status_code(client);
+    esp_http_client_cleanup(client);
+
+    if (err != ESP_OK || status != 200) {
+        ESP_LOGW(TAG, "app release fetch failed: err=%d status=%d", err, status);
+        return false;
+    }
+
+    cJSON *root = cJSON_Parse(app_json_buf);
+    if (!root) {
+        ESP_LOGW(TAG, "app: cJSON_Parse failed, first 100 chars: %.100s", app_json_buf);
+        return false;
+    }
+
+    cJSON *assets = cJSON_GetObjectItem(root, "assets");
+    if (!cJSON_IsArray(assets)) {
+        ESP_LOGW(TAG, "app: no 'assets' array in response");
+        cJSON_Delete(root);
+        return false;
+    }
+
+    int n = cJSON_GetArraySize(assets);
+    int found = 0;
+    for (int i = 0; i < n && found < max; i++) {
+        cJSON *asset = cJSON_GetArrayItem(assets, i);
+        cJSON *name = cJSON_GetObjectItem(asset, "name");
+        cJSON *dl_url = cJSON_GetObjectItem(asset, "browser_download_url");
+        if (!cJSON_IsString(name) || !cJSON_IsString(dl_url)) continue;
+        snprintf(out_names[found], 64, "%s", name->valuestring);
+        snprintf(out_urls[found], 256, "%s", dl_url->valuestring);
+        found++;
+    }
+    cJSON_Delete(root);
+    *out_count = found;
+    return found > 0;
+}
+
 bool k85_apprepo_download_file(const char *url, const char *dest_path) {
     esp_http_client_config_t cfg = {};
     cfg.url = url;
