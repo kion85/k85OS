@@ -70,7 +70,8 @@ void k85_config_defaults(k85_config_t *cfg) {
     cfg->ap_channel = 1;
     cfg->ap_open = false;
     cfg->bg_gradient_enabled = false;
-    cfg->menu_grid_ui_enabled = false;
+    cfg->menu_ui_style = 0;
+    cfg->bios_ui_style = 0;
     cfg->lock_shape = 0;
     cfg->lock_particle_color = 0xFFFFFFFF;
     cfg->grub_enabled = true;
@@ -226,7 +227,8 @@ static cJSON *cfg_to_json(const k85_config_t *c) {
     cJSON_AddNumberToObject(root, "ap_channel", c->ap_channel);
     cJSON_AddBoolToObject(root, "ap_open", c->ap_open);
     cJSON_AddBoolToObject(root, "bg_gradient_enabled", c->bg_gradient_enabled);
-    cJSON_AddBoolToObject(root, "menu_grid_ui_enabled", c->menu_grid_ui_enabled);
+    cJSON_AddNumberToObject(root, "menu_ui_style", c->menu_ui_style);
+    cJSON_AddNumberToObject(root, "bios_ui_style", c->bios_ui_style);
     cJSON_AddNumberToObject(root, "lock_shape", c->lock_shape);
     cJSON_AddNumberToObject(root, "lock_particle_color", (double)c->lock_particle_color);
     cJSON_AddBoolToObject(root, "grub_enabled", c->grub_enabled);
@@ -320,7 +322,8 @@ static void cfg_from_json(cJSON *root, k85_config_t *out) {
     { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "ap_channel"); if (_x && cJSON_IsNumber(_x)) out->ap_channel = _x->valueint; }
     { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "ap_open"); if (_x) out->ap_open = cJSON_IsTrue(_x); }
     { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "bg_gradient_enabled"); if (_x) out->bg_gradient_enabled = cJSON_IsTrue(_x); }
-    { cJSON *_y = cJSON_GetObjectItemCaseSensitive(root, "menu_grid_ui_enabled"); if (_y) out->menu_grid_ui_enabled = cJSON_IsTrue(_y); }
+    { cJSON *_y = cJSON_GetObjectItemCaseSensitive(root, "menu_ui_style"); if (_y) out->menu_ui_style = _y->valueint; }
+    { cJSON *_z = cJSON_GetObjectItemCaseSensitive(root, "bios_ui_style"); if (_z) out->bios_ui_style = _z->valueint; }
     { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "lock_shape"); if (_x && cJSON_IsNumber(_x)) out->lock_shape = _x->valueint; }
     { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "lock_particle_color"); if (_x && cJSON_IsNumber(_x)) out->lock_particle_color = (uint32_t)_x->valuedouble; }
     { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "grub_enabled"); if (_x) out->grub_enabled = cJSON_IsTrue(_x); }

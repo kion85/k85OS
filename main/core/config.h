@@ -52,7 +52,8 @@ typedef struct {
     int ap_channel; // 1-13, канал точки доступа Hotspot
     bool ap_open;
     bool bg_gradient_enabled;
-    bool menu_grid_ui_enabled;
+    int menu_ui_style; // 0=List, 1=Grid, 2=List+Icons
+    int bios_ui_style; // 0=List, 1=Grid, 2=List+Icons
     int lock_shape; // 0=circle 1=square 2=mixed
     uint32_t lock_particle_color; // 0xFFFFFFFF = авто-палитра
     bool grub_enabled;

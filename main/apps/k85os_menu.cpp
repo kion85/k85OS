@@ -306,43 +306,84 @@ static int color_preset_index(uint32_t color) {
 }
 
 static void run_customization_menu(void) {
-    static const char *items[] = {"BG color", "Highlight color", "Text color", "Selection style", "Back"};
-    int selected = 0;
+    const int CUST_COUNT = 6;
+    static int selected = 0;
+    if (selected >= CUST_COUNT) selected = 0;
 
-    while (true) {
-        char labeled[5][32];
+    char labeled[6][32];
+
+    auto build_labels = [&]() {
         int bg_idx = color_preset_index(g_config.bios_bg_color);
         int hl_idx = color_preset_index(g_config.bios_hl_color);
         int tx_idx = color_preset_index(g_config.bios_text_color);
-
         snprintf(labeled[0], sizeof(labeled[0]), "BG: %s", bg_idx < 0 ? "Default" : K85_BIOS_COLOR_NAMES[bg_idx]);
         snprintf(labeled[1], sizeof(labeled[1]), "Highlight: %s", hl_idx < 0 ? "Default" : K85_BIOS_COLOR_NAMES[hl_idx]);
         snprintf(labeled[2], sizeof(labeled[2]), "Text: %s", tx_idx < 0 ? "Default" : K85_BIOS_COLOR_NAMES[tx_idx]);
         snprintf(labeled[3], sizeof(labeled[3]), "Select: %s", g_config.bios_selection_style == 0 ? "Filled" : "Arrow");
-        snprintf(labeled[4], sizeof(labeled[4]), "Back");
-        const char *display[5] = { labeled[0], labeled[1], labeled[2], labeled[3], labeled[4] };
+        static const char *ui_style_names[3] = {"List", "Grid", "List+Icons"};
+        int uis = g_config.bios_ui_style;
+        if (uis < 0 || uis > 2) uis = 0;
+        snprintf(labeled[4], sizeof(labeled[4]), "UI Style: %s", ui_style_names[uis]);
+        snprintf(labeled[5], sizeof(labeled[5]), "Back");
+    };
 
-        int idx = k85_run_list_menu("CUSTOMIZATION", display, 5, nullptr);
-        if (idx < 0 || idx == 4) return;
-
-        if (idx == 3) {
-            g_config.bios_selection_style = (g_config.bios_selection_style + 1) % 2;
-            k85_config_save();
-            continue;
+    auto draw = [&]() {
+        build_labels();
+        uint32_t bg = k85_get_bg();
+        uint32_t fg = k85_get_fg();
+        uint32_t accent = k85_get_accent();
+        M5.Display.fillScreen(bg);
+        M5.Display.setTextSize(1);
+        M5.Display.setCursor(4, 2);
+        M5.Display.setTextColor(accent, bg);
+        M5.Display.print("CUSTOMIZATION");
+        int y = 18;
+        for (int i = 0; i < CUST_COUNT; i++) {
+            bool sel = (i == selected);
+            M5.Display.setCursor(4, y);
+            M5.Display.setTextColor(sel ? (uint32_t)0x000000 : fg, sel ? accent : bg);
+            M5.Display.print(sel ? "> " : "  ");
+            M5.Display.print(labeled[i]);
+            y += 14;
         }
+        M5.Display.setTextColor((uint32_t)0xAAAAAA, bg);
+        M5.Display.setCursor(4, y + 4);
+        M5.Display.print("A=next B=select A+B=exit");
+    };
 
-        // Р¦РёРєР»РёС‡РµСЃРєРёР№ РІС‹Р±РѕСЂ: Default -> 10 С†РІРµС‚РѕРІ -> Default...
-        uint32_t *target = (idx == 0) ? &g_config.bios_bg_color : (idx == 1) ? &g_config.bios_hl_color : &g_config.bios_text_color;
-        int cur = color_preset_index(*target);
-        cur++;
-        if (cur >= 10) {
-            *target = 0xFFFFFFFF; // РЅР°Р·Р°Рґ Рє РґРµС„РѕР»С‚Сѓ
-        } else {
-            *target = K85_BIOS_COLOR_PRESETS[cur];
+    draw();
+    while (true) {
+        k85_input_update();
+        if (k85_ab_held(500)) { k85_wait_ab_release(); return; }
+        if (k85_btn_a_pressed()) {
+            selected = (selected + 1) % CUST_COUNT;
+            draw();
         }
-        k85_config_save();
+        if (k85_btn_b_pressed()) {
+            if (selected == 5) { return; }
+            if (selected == 4) {
+                g_config.bios_ui_style = (g_config.bios_ui_style + 1) % 3;
+                k85_config_save();
+            } else if (selected == 3) {
+                g_config.bios_selection_style = (g_config.bios_selection_style + 1) % 2;
+                k85_config_save();
+            } else {
+                uint32_t *target = (selected == 0) ? &g_config.bios_bg_color : (selected == 1) ? &g_config.bios_hl_color : &g_config.bios_text_color;
+                int cur = color_preset_index(*target);
+                cur++;
+                if (cur >= 10) {
+                    *target = 0xFFFFFFFF;
+                } else {
+                    *target = K85_BIOS_COLOR_PRESETS[cur];
+                }
+                k85_config_save();
+            }
+            draw();
+        }
+        vTaskDelay(pdMS_TO_TICKS(30));
     }
 }
+
 
 static uint32_t darken(uint32_t color, int percent) {
     int r = (color >> 16) & 0xFF;
@@ -391,7 +432,128 @@ static void draw_uefi_border(void) {
     M5.Display.drawFastVLine(w - 1, 0, h, dark);
 }
 
-static void bios_draw(void) {
+// idx соответствует k85_bios_labels[idx] — уникальная иконка на каждый из 21 пункта.
+static void draw_bios_icon(int idx, int cx, int cy, int r, uint32_t col) {
+    auto &d = M5.Display;
+    switch (idx) {
+        case 0: // WiFi module
+            d.fillRect(cx - 1, cy + r/2 - 1, 2, 2, col);
+            d.drawLine(cx - r/2, cy, cx, cy - r/2, col);
+            d.drawLine(cx, cy - r/2, cx + r/2, cy, col);
+            break;
+        case 1: // Bluetooth module
+            d.drawLine(cx, cy - r, cx, cy + r, col);
+            d.drawLine(cx, cy - r, cx + r/2, cy - r/3, col);
+            d.drawLine(cx + r/2, cy - r/3, cx - r/2, cy + r/3, col);
+            d.drawLine(cx - r/2, cy + r/3, cx + r/2, cy + r - 2, col);
+            d.drawLine(cx + r/2, cy + r - 2, cx, cy + r, col);
+            break;
+        case 2: // OTA lock
+            d.drawRoundRect(cx - r/2, cy - 1, r, r/2 + 2, 1, col);
+            d.drawCircle(cx, cy - r/2, r/3, col);
+            break;
+        case 3: // RAM/ROM info
+            d.drawRect(cx - r/2, cy - r/3, r, r*2/3, col);
+            for (int k = -1; k <= 1; k++) d.drawFastVLine(cx + k * r/3, cy - r/3 - 2, 2, col);
+            break;
+        case 4: // Chip info
+            d.drawRect(cx - r/3, cy - r/3, r*2/3, r*2/3, col);
+            d.drawFastHLine(cx - r/2, cy, r/6, col);
+            d.drawFastHLine(cx + r/3, cy, r/6, col);
+            d.drawFastVLine(cx, cy - r/2, r/6, col);
+            d.drawFastVLine(cx, cy + r/3, r/6, col);
+            break;
+        case 5: // Uptime
+            d.drawCircle(cx, cy, r, col);
+            d.drawLine(cx, cy, cx, cy - r + 2, col);
+            d.drawLine(cx, cy, cx + r/2, cy, col);
+            break;
+        case 6: // Active OTA slot
+            d.drawRoundRect(cx - r/2, cy - r/2, r, r, 2, col);
+            d.drawFastHLine(cx - r/2 + 1, cy, r - 2, col);
+            break;
+        case 7: // Rollback firmware
+            d.drawCircle(cx, cy, r/2, col);
+            d.fillTriangle(cx - r/2 - 2, cy - 1, cx - r/2 - 2, cy + 3, cx - r/2 + 2, cy + 1, col);
+            break;
+        case 8: // MAC address
+            d.drawFastHLine(cx - r/2, cy - 2, r, col);
+            d.drawFastHLine(cx - r/2, cy + 2, r, col);
+            d.drawFastVLine(cx - r/4, cy - r/2, r, col);
+            d.drawFastVLine(cx + r/4, cy - r/2, r, col);
+            break;
+        case 9: // Battery voltage
+            d.drawRect(cx - r/2, cy - r/3, r - 1, r*2/3, col);
+            d.fillRect(cx + r/2 - 1, cy - 2, 2, 4, col);
+            d.fillRect(cx - r/2 + 2, cy - r/3 + 2, r - 5, r*2/3 - 4, col);
+            break;
+        case 10: // Update UEFI theme
+            d.drawLine(cx, cy - r/2, cx, cy + r/3, col);
+            d.fillTriangle(cx - 3, cy, cx + 3, cy, cx, cy + r/2, col);
+            break;
+        case 11: // Customization
+            d.fillCircle(cx - r/3, cy - r/3, 2, col);
+            d.fillCircle(cx + r/3, cy - r/3, 2, col);
+            d.fillCircle(cx, cy + r/3, 2, col);
+            d.drawCircle(cx, cy, r, col);
+            break;
+        case 12: // POST beep
+            d.fillTriangle(cx - r/2, cy - r/3, cx - r/2, cy + r/3, cx - 1, cy, col);
+            d.drawCircle(cx + r/3, cy, r/3, col);
+            break;
+        case 13: // POST beep info
+            d.drawCircle(cx, cy, r, col);
+            d.fillRect(cx - 1, cy - r/3, 2, r/3, col);
+            d.fillRect(cx - 1, cy - r/2 - 2, 2, 2, col);
+            break;
+        case 14: // Mute all sound
+            d.fillTriangle(cx - r/2, cy - r/3, cx - r/2, cy + r/3, cx - 1, cy, col);
+            d.drawLine(cx + r/4, cy - r/3, cx + r, cy + r/3, col);
+            d.drawLine(cx + r/4, cy + r/3, cx + r, cy - r/3, col);
+            break;
+        case 15: // GRUB menu
+            d.drawFastHLine(cx - r/2, cy - r/2, r, col);
+            d.drawFastHLine(cx - r/2, cy, r, col);
+            d.drawFastHLine(cx - r/2, cy + r/2, r, col);
+            break;
+        case 16: // Boot options
+            d.drawCircle(cx, cy, r/2, col);
+            d.drawFastVLine(cx, cy - r, r/2, col);
+            break;
+        case 17: // Wipe WiFi networks
+            d.drawLine(cx - r/2, cy - r/2, cx, cy - r/2, col);
+            d.drawLine(cx, cy - r/2, cx, cy - 1, col);
+            d.drawLine(cx - r/2, cy + r/2, cx + r/2, cy - r/2, col);
+            break;
+        case 18: // Reset config
+            d.drawCircle(cx, cy, r/2, col);
+            d.fillTriangle(cx + r/2 - 1, cy - r/2, cx + r/2 + 3, cy - r/2, cx + r/2 + 1, cy - r/2 + 4, col);
+            break;
+        case 19: // Factory reset (danger)
+            d.fillTriangle(cx - r/2, cy + r/2, cx, cy - r/2, cx + r/2, cy + r/2, col);
+            break;
+        case 20: // Reboot
+            d.drawCircle(cx, cy, r/2, col);
+            d.drawFastVLine(cx, cy - r/2 - 1, r/2, col);
+            break;
+        default:
+            d.fillCircle(cx, cy, r/3, col);
+    }
+}
+static void bios_draw_header(uint32_t grad_top, uint32_t w) {
+    uint32_t header_fg = contrast_color(grad_top);
+    M5.Display.setTextSize(1);
+    M5.Display.setCursor(6, 4);
+    M5.Display.setTextColor(header_fg, grad_top);
+    M5.Display.print("k85OS Setup Utility");
+    char ver[16];
+    snprintf(ver, sizeof(ver), "v%s", K85_FW_VERSION);
+    M5.Display.setCursor((int)w - (int)strlen(ver) * 6 - 6, 4);
+    M5.Display.print(ver);
+    M5.Display.drawFastHLine(2, 14, (int)w - 4, 0x5555AA);
+}
+
+static void bios_draw_list(bool with_icons) {
     bios_clamp_scroll();
 
     bool custom_bg = (g_config.bios_bg_color != 0xFFFFFFFF);
@@ -402,7 +564,7 @@ static void bios_draw(void) {
     uint32_t grad_top, grad_bottom;
     if (custom_bg) {
         grad_top = base_bg;
-        grad_bottom = base_bg; // СЃРїР»РѕС€РЅРѕР№ С†РІРµС‚, Р±РµР· РіСЂР°РґРёРµРЅС‚Р°
+        grad_bottom = base_bg;
     } else {
         grad_top = darken(base_bg == 0x000000 ? 0x0000C0 : base_bg, 60);
         grad_bottom = (base_bg == 0x000000) ? 0x0000C0 : base_bg;
@@ -410,18 +572,8 @@ static void bios_draw(void) {
     draw_gradient_bg(grad_top, grad_bottom);
     draw_uefi_border();
 
-    uint32_t header_fg = contrast_color(grad_top);
-    M5.Display.setTextSize(1);
-    M5.Display.setCursor(6, 4);
-    M5.Display.setTextColor(header_fg, grad_top);
-    M5.Display.print("k85OS Setup Utility");
-    char ver[16];
-    snprintf(ver, sizeof(ver), "v%s", K85_FW_VERSION);
     int w = M5.Display.width();
-    M5.Display.setCursor(w - (int)strlen(ver) * 6 - 6, 4);
-    M5.Display.print(ver);
-
-    M5.Display.drawFastHLine(2, 14, w - 4, 0x5555AA);
+    bios_draw_header(grad_top, (uint32_t)w);
 
     bool filled_style = (g_config.bios_selection_style == 0);
     uint32_t sel_text_color = contrast_color(accent);
@@ -433,30 +585,33 @@ static void bios_draw(void) {
 
     for (int i = s_scroll_top; i < last_visible; i++) {
         bool sel = (i == s_selected);
-        bool danger = (i == 19); // Factory reset
-
+        bool danger = (i == 19);
         uint32_t row_bg = (custom_bg ? base_bg : grad_bottom);
         if (sel && filled_style) {
-            M5.Display.fillRect(2, y - 2, w - 4, 13, accent);
+            M5.Display.fillRoundRect(2, y - 2, w - 4, 13, 4, accent);
         }
-
-        M5.Display.setCursor(6, y);
         uint32_t item_fg;
         uint32_t item_bg;
         if (sel && filled_style) {
             item_fg = sel_text_color;
             item_bg = accent;
         } else if (sel && !filled_style) {
-            item_fg = accent; // РІС‹РґРµР»РµРЅРёРµ С‚РѕР»СЊРєРѕ С†РІРµС‚РѕРј С‚РµРєСЃС‚Р° РїСЂРё "СЃС‚СЂРµР»РѕС‡РЅРѕРј" СЃС‚РёР»Рµ
+            item_fg = accent;
             item_bg = row_bg;
         } else {
             item_fg = danger ? 0xFF4444 : fg;
             item_bg = row_bg;
         }
         M5.Display.setTextColor(item_fg, item_bg);
-        M5.Display.print(sel ? "> " : "  ");
+        if (with_icons) {
+            uint32_t icon_col = danger ? 0xFF4444 : item_fg;
+            draw_bios_icon(i, 11, y + 4, 5, icon_col);
+            M5.Display.setCursor(24, y);
+        } else {
+            M5.Display.setCursor(6, y);
+            M5.Display.print(sel ? "> " : "  ");
+        }
         M5.Display.print(k85_bios_labels[i]);
-
         bios_value_str(val, sizeof(val), i);
         if (val[0]) {
             M5.Display.setCursor(150, y);
@@ -465,13 +620,90 @@ static void bios_draw(void) {
         }
         y += 14;
     }
-
     M5.Display.drawFastHLine(2, y + 2, w - 4, 0x5555AA);
     M5.Display.setTextColor(contrast_color(grad_bottom), grad_bottom);
     M5.Display.setCursor(6, y + 8);
     M5.Display.print("A=next B=select A+B=exit");
 
     k85_draw_battery_icon();
+}
+
+static void bios_draw_grid(void) {
+    if (s_selected >= K85_BIOS_ITEM_COUNT) s_selected = K85_BIOS_ITEM_COUNT - 1;
+    if (s_selected < 0) s_selected = 0;
+
+    bool custom_bg = (g_config.bios_bg_color != 0xFFFFFFFF);
+    uint32_t base_bg = custom_bg ? g_config.bios_bg_color : s_bios_theme.bg;
+    uint32_t accent = (g_config.bios_hl_color != 0xFFFFFFFF) ? g_config.bios_hl_color : s_bios_theme.accent;
+    uint32_t fg = (g_config.bios_text_color != 0xFFFFFFFF) ? g_config.bios_text_color : s_bios_theme.fg;
+
+    uint32_t grad_top = custom_bg ? base_bg : darken(base_bg == 0x000000 ? 0x0000C0 : base_bg, 60);
+    uint32_t grad_bottom = custom_bg ? base_bg : ((base_bg == 0x000000) ? 0x0000C0 : base_bg);
+    draw_gradient_bg(grad_top, grad_bottom);
+    draw_uefi_border();
+
+    int w = M5.Display.width();
+    int h = M5.Display.height();
+    bios_draw_header(grad_top, (uint32_t)w);
+
+    const int cols = 4;
+    const int rows = 2;
+    const int per_page = cols * rows;
+    const int start_y = 18;
+    int grid_h = h - start_y - 12;
+    int cell_w = w / cols;
+    int cell_h = grid_h / rows;
+
+    int page = s_selected / per_page;
+    int page_count = (K85_BIOS_ITEM_COUNT + per_page - 1) / per_page;
+    int page_start = page * per_page;
+    int page_end = page_start + per_page;
+    if (page_end > K85_BIOS_ITEM_COUNT) page_end = K85_BIOS_ITEM_COUNT;
+
+    for (int i = page_start; i < page_end; i++) {
+        int local = i - page_start;
+        int col = local % cols;
+        int row = local / cols;
+        int cx = col * cell_w + cell_w / 2;
+        int cy = start_y + row * cell_h + cell_h / 2 - 6;
+        bool sel = (i == s_selected);
+        bool danger = (i == 19);
+        if (sel) {
+            M5.Display.fillRoundRect(col * cell_w + 3, start_y + row * cell_h + 2,
+                                      cell_w - 6, cell_h - 4, 6, accent);
+        }
+        uint32_t icon_col = sel ? contrast_color(accent) : (danger ? 0xFF4444 : fg);
+        draw_bios_icon(i, cx, cy, 10, icon_col);
+
+        M5.Display.setTextColor(sel ? contrast_color(accent) : fg, sel ? accent : (custom_bg ? base_bg : grad_bottom));
+        char short_label[16];
+        int max_chars = (cell_w - 4) / 6;
+        if (max_chars > 15) max_chars = 15;
+        if (max_chars < 1) max_chars = 1;
+        snprintf(short_label, sizeof(short_label), "%.*s", max_chars, k85_bios_labels[i]);
+        int tx = col * cell_w + (cell_w - (int)strlen(short_label) * 6) / 2;
+        if (tx < col * cell_w) tx = col * cell_w + 1;
+        M5.Display.setCursor(tx, start_y + row * cell_h + cell_h - 12);
+        M5.Display.print(short_label);
+    }
+
+    M5.Display.setTextColor(0xAAAAAA, custom_bg ? base_bg : grad_bottom);
+    if (page_count > 1) {
+        char pg[16];
+        snprintf(pg, sizeof(pg), "%d/%d", page + 1, page_count);
+        M5.Display.setCursor(w - (int)strlen(pg) * 6 - 4, h - 10);
+        M5.Display.print(pg);
+    }
+
+    k85_draw_battery_icon();
+}
+
+static void bios_draw(void) {
+    switch (g_config.bios_ui_style) {
+        case 1: bios_draw_grid(); break;
+        case 2: bios_draw_list(true); break;
+        default: bios_draw_list(false); break;
+    }
 }
 
 static void bios_apply(int idx) {

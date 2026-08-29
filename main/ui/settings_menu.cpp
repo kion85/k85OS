@@ -72,7 +72,13 @@ static void settings_value_str(char *out, size_t out_size, int idx) {
         case 11: snprintf(out, out_size, "%s", g_config.bg_gradient_enabled ? "ON" : "OFF"); break;
         case 12: out[0] = 0; break;
         case 13: snprintf(out, out_size, "%s", g_config.ssh_enabled ? "ON" : "OFF"); break;
-        case 14: snprintf(out, out_size, "%s", g_config.menu_grid_ui_enabled ? "Grid" : "List"); break;
+        case 14: {
+            static const char *ui_style_names[3] = {"List", "Grid", "List+Icons"};
+            int s = g_config.menu_ui_style;
+            if (s < 0 || s > 2) s = 0;
+            snprintf(out, out_size, "%s", ui_style_names[s]);
+            break;
+        }
         case 15: out[0] = 0; break; // Back
         default: out[0] = 0;
     }
@@ -336,7 +342,7 @@ static void settings_apply_item(int idx) {
             break;
         }
         case 14:
-            g_config.menu_grid_ui_enabled = !g_config.menu_grid_ui_enabled;
+            g_config.menu_ui_style = (g_config.menu_ui_style + 1) % 3;
             break;
         default:
             break;

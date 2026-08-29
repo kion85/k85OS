@@ -15,6 +15,7 @@
 #include "store.h"
 #include "tools_menu.h"
 #include "games_menu.h"
+#include "../apps/tools/json_interpreter.h"
 #include "rtc_ntp.h"
 #include "clock_menu.h"
 #include "../apps/wifi_menu.h"
@@ -31,7 +32,7 @@
 
 static const char *const K85_MENU_ITEMS[] = {
     "Low tone", "High tone", "Both tones", "Cube", "Colors",
-    "Clock", "WiFi", "Apps", "Tools", "Games", "Settings", "System info", "Logs", "Notifications",
+    "Clock", "WiFi", "Apps", "Tools", "Games", "Interpreter", "Settings", "System info", "Logs", "Notifications",
 };
 #define K85_MENU_ITEM_COUNT (int)(sizeof(K85_MENU_ITEMS) / sizeof(K85_MENU_ITEMS[0]))
 
@@ -149,12 +150,21 @@ static void draw_menu_icon(int cx, int cy, int r, const char *name, uint32_t col
         d.fillCircle(cx, cy - 2, r/2, col);
         d.fillRect(cx - r/4, cy + r/3, r/2, 2, col);
         d.drawCircle(cx, cy - r - 1, 2, col);
+    } else if (!strcmp(name, "Interpreter")) {
+        d.drawLine(cx - r/2, cy - r/2, cx - r/3, cy - r/4, col);
+        d.drawLine(cx - r/3, cy - r/4, cx - r/3, cy + r/4, col);
+        d.drawLine(cx - r/3, cy + r/4, cx - r/2, cy + r/2, col);
+        d.drawLine(cx + r/2, cy - r/2, cx + r/3, cy - r/4, col);
+        d.drawLine(cx + r/3, cy - r/4, cx + r/3, cy + r/4, col);
+        d.drawLine(cx + r/3, cy + r/4, cx + r/2, cy + r/2, col);
     } else {
         d.fillCircle(cx, cy, r/3, col);
     }
 }
 
 static void draw_menu_grid(void);
+static void draw_menu_list_icons(void);
+
 static void draw_menu_list(void) {
     const char *items[K85_MENU_ITEM_COUNT];
     int count = get_filtered_menu(items, K85_MENU_ITEM_COUNT);
@@ -217,8 +227,75 @@ static void draw_menu_list(void) {
 }
 
 void k85_menu_draw(void) {
-    if (g_config.menu_grid_ui_enabled) draw_menu_grid();
-    else draw_menu_list();
+    switch (g_config.menu_ui_style) {
+        case 1: draw_menu_grid(); break;
+        case 2: draw_menu_list_icons(); break;
+        default: draw_menu_list(); break;
+    }
+}
+static void draw_menu_list_icons(void) {
+    const char *items[K85_MENU_ITEM_COUNT];
+    int count = get_filtered_menu(items, K85_MENU_ITEM_COUNT);
+    uint32_t bg = k85_get_bg();
+    uint32_t fg = k85_get_fg();
+    uint32_t accent = k85_get_accent();
+    int w = M5.Display.width();
+    int h = M5.Display.height();
+    if (count == 0) {
+        draw_menu_background(bg, accent);
+        M5.Display.setTextSize(2);
+        M5.Display.setTextColor(fg, bg);
+        M5.Display.setCursor(10, h / 2 - 8);
+        M5.Display.print("No items");
+        k85_status_bar_draw();
+        return;
+    }
+    if (s_selected >= count) s_selected = count - 1;
+    if (s_selected < 0) s_selected = 0;
+
+    draw_menu_background(bg, accent);
+
+    const int line_h = 22;
+    const int start_y = 16;
+    int visible_count = (h - start_y) / line_h;
+    if (visible_count < 1) visible_count = 1;
+    if (s_selected < s_scroll_offset) {
+        s_scroll_offset = s_selected;
+    } else if (s_selected >= s_scroll_offset + visible_count) {
+        s_scroll_offset = s_selected - visible_count + 1;
+    }
+    int max_scroll = count - visible_count;
+    if (max_scroll < 0) max_scroll = 0;
+    if (s_scroll_offset > max_scroll) s_scroll_offset = max_scroll;
+    if (s_scroll_offset < 0) s_scroll_offset = 0;
+    int end_index = s_scroll_offset + visible_count;
+    if (end_index > count) end_index = count;
+
+    M5.Display.setTextSize(1);
+    for (int i = s_scroll_offset; i < end_index; i++) {
+        int yy = start_y + (i - s_scroll_offset) * line_h;
+        bool sel = (i == s_selected);
+        if (sel) {
+            M5.Display.fillRoundRect(2, yy - 2, w - 4, 16, 4, accent);
+        }
+        uint32_t item_fg = sel ? 0x000000 : fg;
+        uint32_t item_bg = sel ? accent : bg;
+        draw_menu_icon(14, yy + 6, 8, items[i], item_fg);
+        M5.Display.setTextColor(item_fg, item_bg);
+        M5.Display.setCursor(26, yy + 2);
+        M5.Display.print(items[i]);
+    }
+
+    M5.Display.setTextColor(0xAAAAAA, bg);
+    if (s_scroll_offset > 0) {
+        M5.Display.setCursor(w - 14, 4);
+        M5.Display.print("^");
+    }
+    if (end_index < count) {
+        M5.Display.setCursor(w - 14, h - 12);
+        M5.Display.print("v");
+    }
+    k85_status_bar_draw();
 }
 static void draw_menu_grid(void) {
     const char *items[K85_MENU_ITEM_COUNT];
@@ -495,7 +572,7 @@ static void run_action(int index) {
     } else if (!strcmp(item, "Settings")) {
         k85_run_settings_menu();
     } else {
-        run_placeholder(item);
+        if (!strcmp(item, "Interpreter")) { k85_run_json_interpreter(); } else { run_placeholder(item); }
     }
 }
 

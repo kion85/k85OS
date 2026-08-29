@@ -20,11 +20,12 @@
 #include "tools/terminal.h"
 #include "tools/ir_remote.h"
 #include "../net/ssh_client.h"
+#include "tools/task_manager.h"
 
 static const char *TOOLS_ITEMS[] = {
     "WiFi Manager", "Color Test", "Bluetooth Scan", "I2C Scanner",
     "GPIO Control", "Files", "Music Player", "Melodies", "Mic Test",
-    "Air Mouse (screen)", "Air Mouse BLE", "WiFi Hotspot", "Calculator", "Terminal", "IR Remote", "SSH Connect", "Back"
+    "Air Mouse (screen)", "Air Mouse BLE", "WiFi Hotspot", "Calculator", "Terminal", "IR Remote", "SSH Connect", "Task Manager", "Back"
 };
 #define TOOLS_COUNT (int)(sizeof(TOOLS_ITEMS) / sizeof(TOOLS_ITEMS[0]))
 
@@ -76,6 +77,7 @@ void k85_run_tools_menu(void) {
                 k85_run_ssh_client();
             }
         }
+            else if (idx == 16) k85_run_task_manager();
     }
 }
 
