@@ -1,4 +1,4 @@
-﻿#pragma GCC diagnostic push
+#pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat-truncation"
 
 #include "ssh_server.h"
@@ -7,6 +7,7 @@
 #include "core/log.h"
 #include "core/battery.h"
 #include "core/device.h"
+#include "../net/wifi.h"
 #include "esp_chip_info.h"
 #include "esp_flash.h"
 #include "esp_psram.h"
@@ -41,6 +42,9 @@ static TaskHandle_t s_ssh_task = nullptr; // task self-cleanup (static stack sta
 static volatile bool s_ssh_running = false;
 static WOLFSSH_CTX *s_ctx = nullptr;
 
+static int s_ssh_failed_attempts = 0;
+static int64_t s_ssh_lockout_until_us = 0;
+
 static StaticTask_t s_ssh_task_buf;
 static StackType_t *s_ssh_task_stack = nullptr;
 // ВАЖНО: на ESP-IDF FreeRTOS-порте StackType_t == uint8_t, а usStackDepth
@@ -66,7 +70,8 @@ static bool load_or_generate_host_key(byte **out_der, word32 *out_der_sz) {
         long sz = ftell(f);
         fseek(f, 0, SEEK_SET);
         if (sz > 0 && sz < 512) {
-            byte *buf = (byte *)malloc(sz);
+            byte *buf = (byte *)heap_caps_malloc(sz, MALLOC_CAP_SPIRAM);
+            if (!buf) buf = (byte *)malloc(sz);
             if (buf && fread(buf, 1, sz, f) == (size_t)sz) {
                 fclose(f);
                 *out_der = buf;
@@ -107,7 +112,8 @@ static bool load_or_generate_host_key(byte **out_der, word32 *out_der_sz) {
         fclose(wf);
     }
 
-    byte *buf = (byte *)malloc(der_sz);
+    byte *buf = (byte *)heap_caps_malloc(der_sz, MALLOC_CAP_SPIRAM);
+    if (!buf) buf = (byte *)malloc(der_sz);
     if (!buf) return false;
     memcpy(buf, der, der_sz);
     *out_der = buf;
@@ -134,12 +140,24 @@ static int ssh_user_auth_cb(byte authType, WS_UserAuthData *authData, void *ctx)
     (void)ctx;
     if (authType != WOLFSSH_USERAUTH_PASSWORD) return WOLFSSH_USERAUTH_INVALID_AUTHTYPE;
 
+    int64_t now = esp_timer_get_time();
+    if (now < s_ssh_lockout_until_us) {
+        k85_log("ssh: auth rejected - in lockout period");
+        return WOLFSSH_USERAUTH_REJECTED;
+    }
+
     if (!g_config.ssh_enabled || g_config.ssh_username[0] == 0 || g_config.ssh_password_hash[0] == 0) {
         return WOLFSSH_USERAUTH_REJECTED;
     }
 
     if (authData->usernameSz != strlen(g_config.ssh_username) ||
         memcmp(authData->username, g_config.ssh_username, authData->usernameSz) != 0) {
+        s_ssh_failed_attempts++;
+        int shift = s_ssh_failed_attempts > 5 ? 5 : s_ssh_failed_attempts - 1;
+        int delay_s = 1 << shift;
+        if (delay_s > 30) delay_s = 30;
+        s_ssh_lockout_until_us = now + (int64_t)delay_s * 1000000;
+        k85_log("ssh: bad username attempt #%d, locked %ds", s_ssh_failed_attempts, delay_s);
         return WOLFSSH_USERAUTH_INVALID_USER;
     }
 
@@ -152,9 +170,17 @@ static int ssh_user_auth_cb(byte authType, WS_UserAuthData *authData, void *ctx)
     sha256_hex(pass_buf, hash_hex);
 
     if (strcasecmp(hash_hex, g_config.ssh_password_hash) != 0) {
+        s_ssh_failed_attempts++;
+        int64_t now2 = esp_timer_get_time();
+        int shift = s_ssh_failed_attempts > 5 ? 5 : s_ssh_failed_attempts - 1;
+        int delay_s = 1 << shift;
+        if (delay_s > 30) delay_s = 30;
+        s_ssh_lockout_until_us = now2 + (int64_t)delay_s * 1000000;
+        k85_log("ssh: bad password attempt #%d, locked %ds", s_ssh_failed_attempts, delay_s);
         return WOLFSSH_USERAUTH_INVALID_PASSWORD;
     }
 
+    s_ssh_failed_attempts = 0; // успешный вход - сбрасываем счётчик
     return WOLFSSH_USERAUTH_SUCCESS;
 }
 
@@ -368,7 +394,14 @@ static void ssh_server_task(void *arg) {
     setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
     struct sockaddr_in addr = {};
     addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    uint32_t sta_ip = k85_wifi_get_ip_addr();
+    if (sta_ip != 0) {
+        addr.sin_addr.s_addr = sta_ip; // биндимся только на домашнюю сеть, не на AP/все интерфейсы
+        k85_log("ssh: binding to STA IP only");
+    } else {
+        addr.sin_addr.s_addr = htonl(INADDR_ANY); // fallback - WiFi ещё не поднял IP
+        k85_log("ssh: STA IP unavailable, falling back to ANY (temporary)");
+    }
     addr.sin_port = htons(K85_SSH_PORT);
     bind(listen_fd, (struct sockaddr *)&addr, sizeof(addr));
     listen(listen_fd, 2);
@@ -419,7 +452,10 @@ static void ssh_server_task(void *arg) {
 }
 
 K85SshStartResult k85_ssh_server_start(void) {
-    wolfSSH_Debugging_ON(); // временно, для диагностики "-1001" — снять после отладки
+    // wolfSSH_Debugging_ON(); // отключено в релизе - было временно для диагностики
+    k85_log("ssh: free internal RAM before start: %u bytes (PSRAM free: %u bytes)",
+            (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+            (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM)); // временно, для диагностики "-1001" — снять после отладки
     if (s_ssh_task) {
         k85_log("ssh: start requested but already running/stuck");
         return K85_SSH_START_ALREADY_RUNNING;

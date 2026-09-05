@@ -1,8 +1,9 @@
-﻿#include "terminal.h"
+#include "terminal.h"
 #include "config.h"
 #include "theme.h"
 #include "input.h"
 #include "power.h"
+#include "battery.h"
 #include "common.h"
 #include "rtc_ntp.h"
 #include "wifi.h"
@@ -63,7 +64,114 @@ static void terminal_show_result(const char *text) {
     }
 }
 
-// Реальная командная строка — ввод текста через k85_text_input,
+// Прокручиваемый постраничный вывод с переносом длинных строк по словам -
+// в отличие от общего k85_area_show (жёсткий лимит 10 строк без переноса),
+// тут строки, не влезающие по ширине экрана, переносятся на следующую,
+// и весь вывод можно листать кнопкой A, а не только видеть первые 10 строк.
+static void terminal_show_output_scrollable(const char *raw_text) {
+    #define K85_TERM_MAX_WRAPPED 48
+    static char wrapped_storage[2048];
+    const char *wrapped_lines[K85_TERM_MAX_WRAPPED];
+    int wrapped_count = 0;
+
+    int W = M5.Display.width();
+    int max_chars = (W - 8) / 6;
+    if (max_chars < 8) max_chars = 8;
+
+    size_t storage_used = 0;
+    char raw_copy[512];
+    snprintf(raw_copy, sizeof(raw_copy), "%s", raw_text);
+
+    char *line_start = raw_copy;
+    while (*line_start && wrapped_count < K85_TERM_MAX_WRAPPED) {
+        char *nl = strpbrk(line_start, "\r\n");
+        char saved = 0;
+        if (nl) { saved = *nl; *nl = 0; }
+
+        // разбиваем эту логическую строку на куски по max_chars символов
+        size_t len = strlen(line_start);
+        size_t off = 0;
+        do {
+            size_t chunk = len - off;
+            if (chunk > (size_t)max_chars) chunk = max_chars;
+            if (storage_used + chunk + 1 >= sizeof(wrapped_storage)) break;
+            char *dst = wrapped_storage + storage_used;
+            memcpy(dst, line_start + off, chunk);
+            dst[chunk] = 0;
+            wrapped_lines[wrapped_count++] = dst;
+            storage_used += chunk + 1;
+            off += chunk;
+        } while (off < len && wrapped_count < K85_TERM_MAX_WRAPPED);
+        if (len == 0 && wrapped_count < K85_TERM_MAX_WRAPPED) {
+            wrapped_storage[storage_used] = 0;
+            wrapped_lines[wrapped_count++] = wrapped_storage + storage_used;
+            storage_used += 1;
+        }
+
+        if (!nl) break;
+        *nl = saved;
+        line_start = nl;
+        while (*line_start == '\r' || *line_start == '\n') line_start++;
+    }
+
+    if (wrapped_count == 0) {
+        wrapped_storage[0] = 0;
+        wrapped_lines[0] = wrapped_storage;
+        wrapped_count = 1;
+    }
+
+    uint32_t bg = k85_get_bg();
+    uint32_t fg = k85_get_fg();
+    uint32_t accent = k85_get_accent();
+    int H = M5.Display.height();
+    const int line_h = 13; // с запасом, не жмётся вплотную - не наезжает
+    const int top = 16;
+    int visible_lines = (H - top - 12) / line_h;
+    if (visible_lines < 1) visible_lines = 1;
+
+    int scroll = 0;
+
+    auto redraw = [&]() {
+        M5.Display.fillScreen(bg);
+        M5.Display.setTextSize(1);
+        M5.Display.setTextColor(accent, bg);
+        M5.Display.setCursor(4, 2);
+        M5.Display.print("$ output");
+
+        int y = top;
+        for (int i = scroll; i < scroll + visible_lines && i < wrapped_count; i++) {
+            M5.Display.setTextColor(fg, bg);
+            M5.Display.setCursor(4, y);
+            M5.Display.print(wrapped_lines[i]);
+            y += line_h;
+        }
+
+        M5.Display.setTextColor(0xAAAAAA, bg);
+        M5.Display.setCursor(4, H - 12);
+        if (wrapped_count > visible_lines) {
+            M5.Display.print("A=scroll A+B=back");
+        } else {
+            M5.Display.print("A+B=back");
+        }
+        k85_draw_battery_icon();
+    };
+
+    redraw();
+    while (true) {
+        k85_input_update();
+        if (k85_ab_held(500)) { k85_wait_ab_release(); return; }
+        if (k85_btn_a_pressed()) {
+            if (wrapped_count > visible_lines) {
+                scroll += visible_lines;
+                if (scroll >= wrapped_count) scroll = 0;
+                redraw();
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(30));
+    }
+}
+
+// Реальная командная строка - ввод текста через k85_text_input,
 // выполнение через общий k85_shell_run_command (тот же код, что и SSH).
 static void terminal_run_shell(void) {
     while (true) {
@@ -75,21 +183,10 @@ static void terminal_run_shell(void) {
 
         if (!strcmp(cmd, "exit")) return;
 
-        const char *lines[10];
-        int count = 0;
-        char *p = resp;
-        while (*p && count < 10) {
-            lines[count++] = p;
-            char *nl = strpbrk(p, "\r\n");
-            if (!nl) break;
-            while (*nl == '\r' || *nl == '\n') { *nl = 0; nl++; }
-            p = nl;
-        }
-        if (count == 0) {
-            const char *empty[] = { "(no output)" };
-            k85_area_show(empty, 1, "$");
+        if (resp[0] == 0) {
+            terminal_show_output_scrollable("(no output)");
         } else {
-            k85_area_show(lines, count, "$");
+            terminal_show_output_scrollable(resp);
         }
 
         bool reboot = !strcmp(cmd, "reboot");

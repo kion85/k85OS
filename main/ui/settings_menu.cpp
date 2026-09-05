@@ -1,4 +1,4 @@
-﻿#include "settings_menu.h"
+#include "settings_menu.h"
 #include "config.h"
 #include "theme.h"
 #include "power.h"
@@ -16,6 +16,8 @@
 #include "lock_screen_settings.h"
 #include "../core/lock_auth.h"
 #include "../net/ssh_server.h"
+#include "../net/firmware_flash.h"
+#include "cpu_freq.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 
@@ -26,13 +28,13 @@
 #include <cstdio>
 #include <cstddef>
 
-#define K85_SETTINGS_ITEM_COUNT 16
+#define K85_SETTINGS_ITEM_COUNT 17
 #define K85_SETTINGS_BACK_IDX   (K85_SETTINGS_ITEM_COUNT - 1)
 
 static const char *k85_settings_labels[K85_SETTINGS_ITEM_COUNT] = {
     "Theme", "Brightness", "Battery mode", "Boot style",
     "Device name", "Sound volume", "WiFi", "Reset steps",
-    "Check for updates", "Screen lock", "Status bar", "BG gradient", "Lock screen", "SSH Server", "Menu UI style", "Back",
+    "Check for updates", "Screen lock", "Status bar", "BG gradient", "Lock screen", "SSH Server", "Menu UI style", "CPU freq", "Back",
 };
 
 static int s_selected = 0;
@@ -79,7 +81,13 @@ static void settings_value_str(char *out, size_t out_size, int idx) {
             snprintf(out, out_size, "%s", ui_style_names[s]);
             break;
         }
-        case 15: out[0] = 0; break; // Back
+        case 15: {
+            int mhz = g_config.cpu_freq_mhz;
+            if (mhz != 240 && mhz != 160 && mhz != 80) mhz = 160;
+            snprintf(out, out_size, "%d MHz", mhz);
+            break;
+        }
+        case 16: out[0] = 0; break; // Back
         default: out[0] = 0;
     }
 }
@@ -206,8 +214,9 @@ static void settings_apply_item(int idx) {
             }
             char ver[16];
             char url[256];
+            char sig_url[256];
             k85_show_message("Checking...");
-            if (!k85_ota_check_update(ver, sizeof(ver), url, sizeof(url))) {
+            if (!k85_ota_check_update(ver, sizeof(ver), url, sizeof(url), sig_url, sizeof(sig_url))) {
                 k85_show_message("No update found\nA+B=back");
                 while (true) {
                     k85_input_update();
@@ -232,18 +241,20 @@ static void settings_apply_item(int idx) {
 
             k85_show_message("Installing 0%...");
             static char progress_msg[32];
-            bool ok = k85_ota_perform_update(url, [](int percent) {
+            bool ok = k85_fwflash_from_url(url, sig_url, [](int percent) {
                 snprintf(progress_msg, sizeof(progress_msg), "Installing %d%%...", percent);
                 k85_show_message(progress_msg);
             });
             // ???? ????? ???? ? ?? ??????? (????? ????????????? ?????????? ???)
-            if (!ok) {
-                k85_show_message("Update failed\nA+B=back");
-                while (true) {
-                    k85_input_update();
-                    if (k85_ab_held(500)) { k85_wait_ab_release(); break; }
-                    vTaskDelay(pdMS_TO_TICKS(30));
-                }
+            if (ok) {
+                k85_show_message("Verified & written!\nActivate via GRUB ->\nAlt Firmware\nA+B=back");
+            } else {
+                k85_show_message("Update failed\n(bad signature or\nnetwork error)\nA+B=back");
+            }
+            while (true) {
+                k85_input_update();
+                if (k85_ab_held(500)) { k85_wait_ab_release(); break; }
+                vTaskDelay(pdMS_TO_TICKS(30));
             }
             break;
         }
@@ -344,6 +355,18 @@ static void settings_apply_item(int idx) {
         case 14:
             g_config.menu_ui_style = (g_config.menu_ui_style + 1) % 3;
             break;
+        case 15: {
+            int new_mhz = k85_cpu_freq_cycle();
+            if (new_mhz == 80) {
+                k85_show_message("Warning: 80MHz may\ncause WiFi/BT issues\nA+B=back");
+                while (true) {
+                    k85_input_update();
+                    if (k85_ab_held(500)) { k85_wait_ab_release(); break; }
+                    vTaskDelay(pdMS_TO_TICKS(30));
+                }
+            }
+            break;
+        }
         default:
             break;
     }

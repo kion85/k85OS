@@ -1,4 +1,4 @@
-﻿#include "ota.h"
+#include "ota.h"
 #include "core/heavy_lock.h"
 #include "../core/version.h"
 #include "../core/notifications.h"
@@ -79,7 +79,8 @@ static bool version_is_newer(const char *remote, const char *local) {
     return r_min > l_min;
 }
 
-bool k85_ota_check_update(char *out_version, size_t ver_size, char *out_url, size_t url_size) {
+bool k85_ota_check_update(char *out_version, size_t ver_size, char *out_url, size_t url_size,
+                           char *out_sig_url, size_t sig_url_size) {
     if (g_config.ota_locked) return false;
     static char json_buf[4096];
     if (!fetch_latest_release_json(json_buf, sizeof(json_buf))) return false;
@@ -93,7 +94,7 @@ bool k85_ota_check_update(char *out_version, size_t ver_size, char *out_url, siz
 
     if (cJSON_IsString(tag) && cJSON_IsArray(assets)) {
         const char *tag_str = tag->valuestring;
-        if (tag_str[0] == 'v' || tag_str[0] == 'V') tag_str++; // убрать 'v' из "v4.2"
+        if (tag_str[0] == 'v' || tag_str[0] == 'V') tag_str++;
 
         if (version_is_newer(tag_str, K85_FW_VERSION)) {
             int n = cJSON_GetArraySize(assets);
@@ -103,10 +104,24 @@ bool k85_ota_check_update(char *out_version, size_t ver_size, char *out_url, siz
                 cJSON *dl_url = cJSON_GetObjectItem(asset, "browser_download_url");
                 if (cJSON_IsString(name) && cJSON_IsString(dl_url)) {
                     size_t nlen = strlen(name->valuestring);
-                    // ищем именно .bin (не bootloader/partition-table, если их тоже прикладываешь)
                     if (nlen > 4 && strcmp(name->valuestring + nlen - 4, ".bin") == 0) {
                         snprintf(out_version, ver_size, "%s", tag_str);
                         snprintf(out_url, url_size, "%s", dl_url->valuestring);
+
+                        out_sig_url[0] = 0;
+                        char sig_name[70];
+                        snprintf(sig_name, sizeof(sig_name), "%s.sig", name->valuestring);
+                        for (int j = 0; j < n; j++) {
+                            cJSON *sig_asset = cJSON_GetArrayItem(assets, j);
+                            cJSON *sig_name_j = cJSON_GetObjectItem(sig_asset, "name");
+                            cJSON *sig_url_j = cJSON_GetObjectItem(sig_asset, "browser_download_url");
+                            if (cJSON_IsString(sig_name_j) && cJSON_IsString(sig_url_j) &&
+                                strcmp(sig_name_j->valuestring, sig_name) == 0) {
+                                snprintf(out_sig_url, sig_url_size, "%s", sig_url_j->valuestring);
+                                break;
+                            }
+                        }
+
                         found = true;
                         break;
                     }
@@ -119,64 +134,13 @@ bool k85_ota_check_update(char *out_version, size_t ver_size, char *out_url, siz
     return found;
 }
 
-// ---------- Прошивка ----------
-bool k85_ota_perform_update(const char *url, k85_ota_progress_cb progress_cb) {
-    if (g_config.ota_locked) return false;
-    esp_http_client_config_t http_cfg = {};
-    http_cfg.url = url;
-    http_cfg.crt_bundle_attach = esp_crt_bundle_attach;
-    http_cfg.timeout_ms = 15000;
-    http_cfg.keep_alive_enable = true;
-
-    esp_https_ota_config_t ota_cfg = {};
-    ota_cfg.http_config = &http_cfg;
-
-    esp_https_ota_handle_t handle = nullptr;
-    esp_err_t err = esp_https_ota_begin(&ota_cfg, &handle);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "ota_begin failed: %d", err);
-        return false;
-    }
-
-    int image_size = esp_https_ota_get_image_size(handle);
-
-    while (true) {
-        err = esp_https_ota_perform(handle);
-        if (err != ESP_ERR_HTTPS_OTA_IN_PROGRESS) break;
-
-        if (progress_cb && image_size > 0) {
-            int read_so_far = esp_https_ota_get_image_len_read(handle);
-            progress_cb((read_so_far * 100) / image_size);
-        }
-    }
-
-    bool ota_finished_ok = false;
-    if (err == ESP_OK && esp_https_ota_is_complete_data_received(handle)) {
-        if (esp_https_ota_finish(handle) == ESP_OK) {
-            ota_finished_ok = true;
-        }
-    } else {
-        esp_https_ota_abort(handle);
-    }
-
-    if (!ota_finished_ok) {
-        ESP_LOGE(TAG, "OTA failed");
-        return false;
-    }
-
-    ESP_LOGI(TAG, "OTA success, restarting...");
-    if (progress_cb) progress_cb(100);
-    vTaskDelay(pdMS_TO_TICKS(500));
-    esp_restart();
-    return true; // не достигнется
-}
-
 // ---------- Фоновая проверка ----------
 static uint32_t s_interval_ms = 0;
 
 static void ota_check_task(void *arg) {
     char ver[16];
     char url[256];
+    char sig_url[256];
 
     // Не бьём в сеть сразу после старта — даём системе "устояться" и не
     // конкурируем за internal RAM с тем, что пользователь обычно включает
@@ -193,7 +157,7 @@ static void ota_check_task(void *arg) {
             vTaskDelay(pdMS_TO_TICKS(s_interval_ms));
             continue;
         }
-        if (k85_ota_check_update(ver, sizeof(ver), url, sizeof(url))) {
+        if (k85_ota_check_update(ver, sizeof(ver), url, sizeof(url), sig_url, sizeof(sig_url))) {
             k85_notify("Firmware update available: v%s", ver);
             ESP_LOGI(TAG, "Update found: v%s -> %s", ver, url);
         } else {

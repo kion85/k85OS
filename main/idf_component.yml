@@ -6,3 +6,4 @@ dependencies:
   m5stack/m5gfx: "*"
   joltwallet/littlefs: "*"
   espressif/cjson: "*"
+  espressif/esp_websocket_client: "*"

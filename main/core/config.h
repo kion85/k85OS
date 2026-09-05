@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -85,6 +85,9 @@ typedef struct {
     // Profiles (Home/Work/Eco)
     k85_profile_t profiles[K85_MAX_PROFILES];
     int active_profile_idx;
+
+    bool setup_completed; // false у нового устройства - показываем мастер первоначальной настройки
+    int cpu_freq_mhz; // 240/160/80, 0 = не задано (используется дефолт 160)
 } k85_config_t;
 
 extern k85_config_t g_config;

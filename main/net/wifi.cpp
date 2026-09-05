@@ -1,4 +1,4 @@
-﻿#include "wifi.h"
+#include "wifi.h"
 #include "config.h"
 #include "log.h"
 #include "notifications.h"
@@ -197,6 +197,13 @@ const char *k85_wifi_get_ip_str(void) {
         buf[0] = 0;
     }
     return buf;
+}
+
+uint32_t k85_wifi_get_ip_addr(void) {
+    if (!s_connected || !s_netif) return 0;
+    esp_netif_ip_info_t ip_info;
+    if (esp_netif_get_ip_info(s_netif, &ip_info) != ESP_OK) return 0;
+    return ip_info.ip.addr;
 }
 
 int k85_wifi_get_rssi(void) {

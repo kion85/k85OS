@@ -1,4 +1,4 @@
-﻿#include "config.h"
+#include "config.h"
 #include "core/profiles.h"
 
 #include <cstdio>
@@ -12,6 +12,8 @@
 #include "mbedtls/sha256.h"
 #include "esp_wifi.h"
 #include "esp_random.h"
+#include "nvs_flash.h"
+#include "nvs.h"
 
 static const char *TAG = "k85_cfg";
 
@@ -100,14 +102,49 @@ void k85_config_defaults(k85_config_t *cfg) {
 // (нужен для esp_wifi_connect). Честно: ключ вычисляется тем же алгоритмом,
 // что известен из исходников прошивки — это защита от простого чтения JSON
 // "как есть", а не от продвинутого реверс-инжиниринга дампа флеша целиком.
+// Секретная добавка к ключу - генерируется один раз на устройстве и
+// хранится в NVS (не в LittleFS, недостижима через cat/ls/веб-менеджер).
+// Без неё ключ AES был бы полностью выводим из MAC-адреса + публичной
+// строки в открытом исходном коде - то есть вычислим кем угодно.
+static void get_or_create_pepper(unsigned char pepper_out[16]) {
+    // ВАЖНО: k85_config_load() вызывается раньше k85_wifi_init(), где
+    // обычно и происходит nvs_flash_init() - значит на первом чтении
+    // конфига NVS может быть ещё не готов. nvs_flash_init() безопасно
+    // вызывать повторно (идемпотентно), поэтому гарантируем готовность
+    // NVS прямо здесь, а не полагаемся на порядок вызовов в app_main.
+    esp_err_t init_err = nvs_flash_init();
+    if (init_err == ESP_ERR_NVS_NO_FREE_PAGES || init_err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        nvs_flash_erase();
+        nvs_flash_init();
+    }
+
+    nvs_handle_t h;
+    esp_err_t err = nvs_open("k85_sec", NVS_READWRITE, &h);
+    if (err != ESP_OK) { memset(pepper_out, 0, 16); return; }
+
+    size_t len = 16;
+    err = nvs_get_blob(h, "wifi_pepper", pepper_out, &len);
+    if (err != ESP_OK || len != 16) {
+        esp_fill_random(pepper_out, 16);
+        nvs_set_blob(h, "wifi_pepper", pepper_out, 16);
+        nvs_commit(h);
+    }
+    nvs_close(h);
+}
+
 static void get_aes_key(unsigned char key_out[16]) {
     uint8_t mac[6];
     esp_wifi_get_mac(WIFI_IF_STA, mac);
+
+    unsigned char pepper[16];
+    get_or_create_pepper(pepper);
+
     unsigned char hash[32];
     char salt[] = "k85os-wifi-store-v1";
-    unsigned char input[6 + sizeof(salt)];
+    unsigned char input[6 + sizeof(salt) + 16];
     memcpy(input, mac, 6);
     memcpy(input + 6, salt, sizeof(salt));
+    memcpy(input + 6 + sizeof(salt), pepper, 16);
     mbedtls_sha256(input, sizeof(input), hash, 0);
     memcpy(key_out, hash, 16);
 }
@@ -288,6 +325,7 @@ static cJSON *cfg_to_json(const k85_config_t *c) {
     cJSON_AddBoolToObject(root, "ssh_enabled", c->ssh_enabled);
     cJSON_AddStringToObject(root, "ssh_username", c->ssh_username);
     cJSON_AddStringToObject(root, "ssh_password_hash", c->ssh_password_hash);
+    cJSON_AddBoolToObject(root, "setup_completed", c->setup_completed);
 
     cJSON_AddNumberToObject(root, "step_count", c->step_count);
     cJSON_AddNumberToObject(root, "step_record", c->step_record);
@@ -401,6 +439,7 @@ static void cfg_from_json(cJSON *root, k85_config_t *out) {
     { cJSON *x = cJSON_GetObjectItemCaseSensitive(root, "ssh_enabled"); if (x) out->ssh_enabled = cJSON_IsTrue(x); }
     { cJSON *x = cJSON_GetObjectItemCaseSensitive(root, "ssh_username"); if (x && cJSON_IsString(x)) set_str(out->ssh_username, sizeof(out->ssh_username), x->valuestring); }
     { cJSON *x = cJSON_GetObjectItemCaseSensitive(root, "ssh_password_hash"); if (x && cJSON_IsString(x)) set_str(out->ssh_password_hash, sizeof(out->ssh_password_hash), x->valuestring); }
+    { cJSON *x = cJSON_GetObjectItemCaseSensitive(root, "setup_completed"); if (x) out->setup_completed = cJSON_IsTrue(x); }
 
     cJSON *sc = cJSON_GetObjectItemCaseSensitive(root, "step_count");
     if (sc && cJSON_IsNumber(sc)) out->step_count = sc->valueint;

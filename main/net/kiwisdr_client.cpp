@@ -1,0 +1,443 @@
+#include "kiwisdr_client.h"
+#include "list_menu.h"
+#include "text_input.h"
+#include "common.h"
+#include "input.h"
+#include "log.h"
+#include "theme.h"
+#include "battery.h"
+
+#include "M5Unified.h"
+#include "esp_websocket_client.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_timer.h"
+
+#include <cstdio>
+#include <cstring>
+#include <cstdlib>
+#include <cmath>
+
+struct K85KiwiPreset { const char *name; const char *host; int port; };
+
+static const K85KiwiPreset K85_KIWI_PRESETS[] = {
+    { "OK2KYJ (Czech)",       "sdr.ok2kyj.cz",              8073 },
+    { "Warszawa (Poland)",    "warszawa.proxy.kiwisdr.com", 8073 },
+    { "K1VL (USA)",           "sdr.k1vl.com",                8073 },
+    { "F5NKP (France)",       "f5nkp.freeboxos.fr",          8073 },
+    { "SDR.DDNS.NET",         "sdr.ddns.net",                8073 },
+};
+#define K85_KIWI_PRESET_COUNT (int)(sizeof(K85_KIWI_PRESETS) / sizeof(K85_KIWI_PRESETS[0]))
+
+#define K85_KIWI_AUDIO_BUF_SAMPLES 2048
+#define K85_KIWI_RETUNE_REPEAT_MS 150
+#define K85_KIWI_DOUBLE_TAP_WINDOW_US 350000
+
+struct K85KiwiMode { const char *name; const char *kiwi_mod; int low_cut; int high_cut; };
+static const K85KiwiMode K85_KIWI_MODES[] = {
+    { "AM",  "am",  -4000, 4000 },
+    { "USB", "usb",   100, 2700 },
+    { "LSB", "lsb", -2700, -100 },
+    { "CW",  "cw",    300,  700 },
+};
+#define K85_KIWI_MODE_COUNT (int)(sizeof(K85_KIWI_MODES) / sizeof(K85_KIWI_MODES[0]))
+
+// Ступени громкости именно для этого инструмента - независимо от системной
+// громкости (та не трогается). 255 = аппаратный максимум M5.Speaker.
+static const uint8_t K85_KIWI_VOL_LEVELS[] = { 250, 200, 150, 100, 50, 0 };
+#define K85_KIWI_VOL_LEVELS_COUNT (int)(sizeof(K85_KIWI_VOL_LEVELS) / sizeof(K85_KIWI_VOL_LEVELS[0]))
+
+#define K85_SPECTRUM_BANDS 16
+
+static char s_host[64] = "";
+static int s_port = 8073;
+static int s_freq_khz = 7200;
+static int s_mode_idx = 0;
+static int s_vol_idx = 0;
+
+static esp_websocket_client_handle_t s_ws = nullptr;
+static volatile bool s_connected = false;
+static volatile bool s_running = false;
+static volatile bool s_need_handshake = false;
+static volatile int s_ws_error_code = 0;
+
+static int16_t s_audio_buf[2][K85_KIWI_AUDIO_BUF_SAMPLES];
+static volatile int s_fill_idx = 0;
+static volatile int s_fill_pos = 0;
+static volatile bool s_buf_ready[2] = { false, false };
+
+static float s_spectrum[K85_SPECTRUM_BANDS] = {0};
+static const float K85_SPECTRUM_FREQS[K85_SPECTRUM_BANDS] = {
+    200, 300, 400, 550, 700, 900, 1100, 1350, 1600, 1900, 2200, 2500, 2800, 3000, 3200, 3400
+};
+
+static void send_retune(void) {
+    if (!s_connected || !s_ws) return;
+    const K85KiwiMode &m = K85_KIWI_MODES[s_mode_idx];
+    char cmd[128];
+    snprintf(cmd, sizeof(cmd), "SET mod=%s low_cut=%d high_cut=%d freq=%d.000",
+             m.kiwi_mod, m.low_cut, m.high_cut, s_freq_khz);
+    int ret = esp_websocket_client_send_text(s_ws, cmd, strlen(cmd), pdMS_TO_TICKS(500));
+    k85_log("kiwisdr: sent retune '%s' -> ret=%d", cmd, ret);
+}
+
+static void cycle_mode(void) {
+    s_mode_idx = (s_mode_idx + 1) % K85_KIWI_MODE_COUNT;
+    send_retune();
+}
+
+static void cycle_volume_down(void) {
+    s_vol_idx++;
+    if (s_vol_idx >= K85_KIWI_VOL_LEVELS_COUNT) s_vol_idx = 0; // после 0 -> обратно на максимум
+    M5.Speaker.setVolume(K85_KIWI_VOL_LEVELS[s_vol_idx]);
+    k85_log("kiwisdr: volume -> %d/255", K85_KIWI_VOL_LEVELS[s_vol_idx]);
+}
+
+// ---------- Простой Гёрцель для оценки энергии в узкой полосе частот ----------
+static float goertzel_mag(const int16_t *samples, int n, float target_freq, float sample_rate) {
+    int k = (int)(0.5f + (n * target_freq) / sample_rate);
+    float w = (2.0f * (float)M_PI / n) * k;
+    float cosine = cosf(w);
+    float coeff = 2.0f * cosine;
+    float q0 = 0, q1 = 0, q2 = 0;
+    for (int i = 0; i < n; i++) {
+        q0 = coeff * q1 - q2 + (float)samples[i];
+        q2 = q1;
+        q1 = q0;
+    }
+    float real = q1 - q2 * cosine;
+    float imag = q2 * sinf(w);
+    return sqrtf(real * real + imag * imag) / n;
+}
+
+static void compute_spectrum(const int16_t *buf, int n) {
+    for (int i = 0; i < K85_SPECTRUM_BANDS; i++) {
+        float mag = goertzel_mag(buf, n, K85_SPECTRUM_FREQS[i], 12000.0f);
+        s_spectrum[i] = s_spectrum[i] * 0.5f + mag * 0.5f; // сглаживание
+    }
+}
+
+#define K85_KIWI_AUDIO_HEADER_SKIP 10
+#define K85_KIWI_SOFT_GAIN 6.0f // программное усиление - независимо от громкости динамика
+
+static void apply_gain(int16_t *buf, int n, float gain) {
+    for (int i = 0; i < n; i++) {
+        float v = (float)buf[i] * gain;
+        if (v > 32767.0f) v = 32767.0f;
+        if (v < -32768.0f) v = -32768.0f;
+        buf[i] = (int16_t)v;
+    }
+}
+
+static void handle_audio_frame(const uint8_t *data, int len) {
+    static bool logged_once = false;
+    if (!logged_once) {
+        logged_once = true;
+        k85_log("kiwisdr: FIRST FRAME len=%d bytes: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x",
+                 len, data[0], data[1],
+                 len > 2 ? data[2] : 0, len > 3 ? data[3] : 0, len > 4 ? data[4] : 0,
+                 len > 5 ? data[5] : 0, len > 6 ? data[6] : 0, len > 7 ? data[7] : 0,
+                 len > 8 ? data[8] : 0, len > 9 ? data[9] : 0);
+    }
+    if (len <= K85_KIWI_AUDIO_HEADER_SKIP) return;
+    if (memcmp(data, "SND", 3) != 0) return;
+
+    const int16_t *samples = (const int16_t *)(data + K85_KIWI_AUDIO_HEADER_SKIP);
+    int n_samples = (len - K85_KIWI_AUDIO_HEADER_SKIP) / 2;
+
+    for (int i = 0; i < n_samples; i++) {
+        s_audio_buf[s_fill_idx][s_fill_pos] = samples[i];
+        s_fill_pos++;
+        if (s_fill_pos >= K85_KIWI_AUDIO_BUF_SAMPLES) {
+            s_buf_ready[s_fill_idx] = true;
+            s_fill_idx = 1 - s_fill_idx;
+            s_fill_pos = 0;
+        }
+    }
+}
+
+static void ws_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
+    esp_websocket_event_data_t *data = (esp_websocket_event_data_t *)event_data;
+    switch (event_id) {
+        case WEBSOCKET_EVENT_BEGIN:
+            k85_log("kiwisdr: ws BEGIN");
+            break;
+        case WEBSOCKET_EVENT_CONNECTED:
+            k85_log("kiwisdr: ws CONNECTED");
+            s_connected = true;
+            s_need_handshake = true; // отправим SET-команды из основного цикла, НЕ отсюда - иначе lock timeout
+            break;
+        case WEBSOCKET_EVENT_DATA:
+            k85_log("kiwisdr: DATA op=%d len=%d payload_off=%d payload_len=%d",
+                     data->op_code, data->data_len, data->payload_offset, data->payload_len);
+            if (data->op_code == 0x02 && data->data_len > 0) {
+                handle_audio_frame((const uint8_t *)data->data_ptr, data->data_len);
+            } else if (data->op_code == 0x01 && data->data_len > 0) {
+                // текстовый ответ сервера - полезно для диагностики хендшейка
+                k85_log("kiwisdr: TEXT: %.*s", data->data_len, (const char *)data->data_ptr);
+            }
+            break;
+        case WEBSOCKET_EVENT_DISCONNECTED:
+            k85_log("kiwisdr: ws DISCONNECTED");
+            s_connected = false;
+            break;
+        case WEBSOCKET_EVENT_ERROR:
+            s_ws_error_code = (int)data->error_handle.esp_ws_handshake_status_code;
+            k85_log("kiwisdr: ws ERROR, handshake_status=%d", s_ws_error_code);
+            s_connected = false;
+            break;
+        default:
+            break;
+    }
+}
+
+static bool ws_connect(void) {
+    char uri[128];
+    int64_t ts = esp_timer_get_time() / 1000;
+    snprintf(uri, sizeof(uri), "ws://%s:%d/kiwi/%lld/SND", s_host, s_port, (long long)ts);
+    k85_log("kiwisdr: connecting to %s", uri);
+
+    esp_websocket_client_config_t cfg = {};
+    cfg.uri = uri;
+    cfg.reconnect_timeout_ms = 3000;
+    cfg.network_timeout_ms = 8000;
+
+    s_ws = esp_websocket_client_init(&cfg);
+    if (!s_ws) {
+        k85_log("kiwisdr: client_init FAILED");
+        return false;
+    }
+
+    esp_websocket_register_events(s_ws, WEBSOCKET_EVENT_ANY, ws_event_handler, nullptr);
+    esp_err_t err = esp_websocket_client_start(s_ws);
+    k85_log("kiwisdr: client_start ret=%d", (int)err);
+    return err == ESP_OK;
+}
+
+static void ws_disconnect(void) {
+    if (s_ws) {
+        esp_websocket_client_stop(s_ws);
+        esp_websocket_client_destroy(s_ws);
+        s_ws = nullptr;
+    }
+    s_connected = false;
+}
+
+static void draw_spectrum(int x0, int y0, int w, int h) {
+    int band_w = w / K85_SPECTRUM_BANDS;
+    float maxv = 1.0f;
+    for (int i = 0; i < K85_SPECTRUM_BANDS; i++) if (s_spectrum[i] > maxv) maxv = s_spectrum[i];
+
+    int peak_idx = 0;
+    float peak_val = -1;
+    for (int i = 0; i < K85_SPECTRUM_BANDS; i++) {
+        int bh = (int)(h * (s_spectrum[i] / maxv));
+        if (bh < h / 6) bh = h / 6; // минимум - треть-шестая часть высоты, не 1-2px невидимая точка
+        if (bh > h) bh = h;
+        int bx = x0 + i * band_w;
+        int by = y0 + (h - bh);
+        bool is_active = s_spectrum[i] > maxv * 0.4f;
+        uint32_t col = is_active ? 0x00FF66 : 0x225522;
+        M5.Display.fillRect(bx + 1, by, band_w - 2, bh, col);
+        if (s_spectrum[i] > peak_val) { peak_val = s_spectrum[i]; peak_idx = i; }
+    }
+
+    int arrow_x = x0 + peak_idx * band_w + band_w / 2;
+    M5.Display.fillTriangle(arrow_x - 4, y0 - 6, arrow_x + 4, y0 - 6, arrow_x, y0 - 1, 0xFFD700);
+}
+
+static void draw_ui(void) {
+    int W = M5.Display.width();
+    int H = M5.Display.height();
+    uint32_t bg = k85_get_bg();
+    uint32_t accent = k85_get_accent();
+
+    M5.Display.fillScreen(bg);
+    M5.Display.setTextSize(1);
+    M5.Display.setTextColor(accent, bg);
+    M5.Display.setCursor(4, 2);
+    M5.Display.print("Internet SDR");
+
+    // Спектр (эквалайзер по реально принятому звуку) занимает основную область
+    int spectrum_y = 18;
+    int spectrum_h = H - 18 - 40; // оставляем место сверху под тайтл и снизу под статус-строки
+    if (spectrum_h < 20) spectrum_h = 20;
+    draw_spectrum(4, spectrum_y + 8, W - 8, spectrum_h);
+
+    // Частота/режим/громкость/статус - мелким текстом внизу
+    M5.Display.setTextColor(0xFFD700, bg);
+    M5.Display.setCursor(4, H - 30);
+    M5.Display.printf("%d kHz  %s  Vol:%d/255", s_freq_khz, K85_KIWI_MODES[s_mode_idx].name,
+                        (int)K85_KIWI_VOL_LEVELS[s_vol_idx]);
+
+    M5.Display.setTextColor(s_connected ? 0x00FF00 : 0xFF6600, bg);
+    M5.Display.setCursor(4, H - 20);
+    M5.Display.print(s_connected ? "Connected" : "Connecting...");
+
+    M5.Display.setTextColor(0xAAAAAA, bg);
+    M5.Display.setCursor(4, H - 10);
+    M5.Display.print("A:-10/mode B:+10/-vol A+B=exit");
+
+    k85_draw_battery_icon();
+}
+
+static void run_session(void) {
+    uint8_t saved_volume = M5.Speaker.getVolume();
+    s_vol_idx = 0;
+    M5.Speaker.setVolume(K85_KIWI_VOL_LEVELS[s_vol_idx]); // максимум только для сессии SDR
+
+    if (!ws_connect()) {
+        M5.Speaker.setVolume(saved_volume);
+        k85_show_message("WS connect failed\nA+B=back");
+        while (true) {
+            k85_input_update();
+            if (k85_ab_held(500)) { k85_wait_ab_release(); break; }
+            vTaskDelay(pdMS_TO_TICKS(30));
+        }
+        return;
+    }
+
+    s_running = true;
+    int64_t last_repeat_a = 0, last_repeat_b = 0;
+    int64_t last_draw = 0;
+
+    bool a_tap_pending = false;
+    int64_t a_pending_since = 0;
+    bool b_tap_pending = false;
+    int64_t b_pending_since = 0;
+
+    while (s_running) {
+        k85_input_update();
+        if (k85_ab_held(500)) {
+            k85_wait_ab_release();
+            s_running = false;
+            break;
+        }
+
+        if (s_need_handshake) {
+            s_need_handshake = false;
+            const char *auth = "SET auth t=kiwi p=";
+            int r1 = esp_websocket_client_send_text(s_ws, auth, strlen(auth), pdMS_TO_TICKS(1000));
+            k85_log("kiwisdr: sent auth ret=%d", r1);
+            vTaskDelay(pdMS_TO_TICKS(200));
+            const char *ar = "SET AR OK in=12000 out=44100";
+            esp_websocket_client_send_text(s_ws, ar, strlen(ar), pdMS_TO_TICKS(1000));
+            vTaskDelay(pdMS_TO_TICKS(200));
+            const char *comp = "SET compression=0";
+            int r2 = esp_websocket_client_send_text(s_ws, comp, strlen(comp), pdMS_TO_TICKS(1000));
+            k85_log("kiwisdr: sent compression ret=%d", r2);
+            vTaskDelay(pdMS_TO_TICKS(200));
+            send_retune();
+        }
+
+        int64_t now = esp_timer_get_time();
+        bool a_tap = k85_btn_a_pressed();
+        bool b_tap = k85_btn_b_pressed();
+        bool a_hold = M5.BtnA.isHolding();
+        bool b_hold = M5.BtnB.isHolding();
+
+        bool retune_needed = false;
+
+        // ---- A: одиночный тап = -10к (с задержкой на случай двойного), двойной = смена режима ----
+        if (a_hold) {
+            a_tap_pending = false;
+            if ((now - last_repeat_a) > K85_KIWI_RETUNE_REPEAT_MS * 1000) {
+                s_freq_khz -= 1; retune_needed = true; last_repeat_a = now;
+            }
+        } else if (a_tap) {
+            if (a_tap_pending && (now - a_pending_since) < K85_KIWI_DOUBLE_TAP_WINDOW_US) {
+                a_tap_pending = false;
+                cycle_mode();
+            } else {
+                a_tap_pending = true; a_pending_since = now;
+            }
+        } else if (a_tap_pending && (now - a_pending_since) >= K85_KIWI_DOUBLE_TAP_WINDOW_US) {
+            a_tap_pending = false;
+            s_freq_khz -= 10; retune_needed = true;
+        }
+
+        // ---- B: одиночный тап = +10к (с задержкой), двойной = убавить громкость (0 -> обратно 100%) ----
+        if (b_hold) {
+            b_tap_pending = false;
+            if ((now - last_repeat_b) > K85_KIWI_RETUNE_REPEAT_MS * 1000) {
+                s_freq_khz += 1; retune_needed = true; last_repeat_b = now;
+            }
+        } else if (b_tap) {
+            if (b_tap_pending && (now - b_pending_since) < K85_KIWI_DOUBLE_TAP_WINDOW_US) {
+                b_tap_pending = false;
+                cycle_volume_down();
+            } else {
+                b_tap_pending = true; b_pending_since = now;
+            }
+        } else if (b_tap_pending && (now - b_pending_since) >= K85_KIWI_DOUBLE_TAP_WINDOW_US) {
+            b_tap_pending = false;
+            s_freq_khz += 10; retune_needed = true;
+        }
+
+        if (s_freq_khz < 0) s_freq_khz = 0;
+        if (retune_needed) send_retune();
+
+        for (int i = 0; i < 2; i++) {
+            if (s_buf_ready[i]) {
+                apply_gain(s_audio_buf[i], K85_KIWI_AUDIO_BUF_SAMPLES, K85_KIWI_SOFT_GAIN);
+                compute_spectrum(s_audio_buf[i], K85_KIWI_AUDIO_BUF_SAMPLES);
+                M5.Speaker.playRaw(s_audio_buf[i], K85_KIWI_AUDIO_BUF_SAMPLES, 12000, false, 1);
+                s_buf_ready[i] = false;
+            }
+        }
+
+        if (now - last_draw > 150000) {
+            draw_ui();
+            last_draw = now;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+
+    ws_disconnect();
+    M5.Speaker.stop();
+    M5.Speaker.setVolume(saved_volume); // возвращаем системную громкость как было
+}
+
+static bool pick_preset(void) {
+    const char *items[K85_KIWI_PRESET_COUNT + 1];
+    for (int i = 0; i < K85_KIWI_PRESET_COUNT; i++) items[i] = K85_KIWI_PRESETS[i].name;
+    items[K85_KIWI_PRESET_COUNT] = "Back";
+    int idx = k85_run_list_menu("KIWISDR PRESETS", items, K85_KIWI_PRESET_COUNT + 1, nullptr);
+    if (idx < 0 || idx == K85_KIWI_PRESET_COUNT) return false;
+    snprintf(s_host, sizeof(s_host), "%s", K85_KIWI_PRESETS[idx].host);
+    s_port = K85_KIWI_PRESETS[idx].port;
+    return true;
+}
+
+static bool pick_manual_host(void) {
+    if (!k85_text_input("SDR host:", s_host, s_host, sizeof(s_host))) return false;
+    if (s_host[0] == 0) return false;
+    char port_buf[8];
+    snprintf(port_buf, sizeof(port_buf), "%d", s_port);
+    if (!k85_text_input("Port:", port_buf, port_buf, sizeof(port_buf))) return false;
+    s_port = atoi(port_buf);
+    if (s_port <= 0) s_port = 8073;
+    return true;
+}
+
+void k85_run_kiwisdr_client(void) {
+    const char *items[] = { "Presets", "Manual host", "Back" };
+    while (true) {
+        int idx = k85_run_list_menu("INTERNET SDR", items, 3, nullptr);
+        if (idx < 0 || idx == 2) return;
+
+        bool have_host = false;
+        if (idx == 0) have_host = pick_preset();
+        else if (idx == 1) have_host = pick_manual_host();
+        if (!have_host) continue;
+
+        char freq_buf[16];
+        snprintf(freq_buf, sizeof(freq_buf), "%d", s_freq_khz);
+        if (!k85_text_input("Frequency (kHz):", freq_buf, freq_buf, sizeof(freq_buf))) continue;
+        int f = atoi(freq_buf);
+        if (f > 0) s_freq_khz = f;
+
+        run_session();
+    }
+}

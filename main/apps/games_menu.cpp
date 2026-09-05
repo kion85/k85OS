@@ -1,4 +1,4 @@
-﻿#include "games_menu.h"
+#include "games_menu.h"
 #include "list_menu.h"
 #include "games/snake.h"
 #include "games/tetris.h"
@@ -65,8 +65,9 @@ static void run_download_menu(void) {
     k85_show_message("Fetching app list...");
     static char names[K85_APPREPO_MAX_ASSETS][64];
     static char urls[K85_APPREPO_MAX_ASSETS][256];
+    static char sig_urls[K85_APPREPO_MAX_ASSETS][256];
     int count = 0;
-    if (!k85_apprepo_fetch_app_list(names, urls, K85_APPREPO_MAX_ASSETS, &count) || count == 0) {
+    if (!k85_apprepo_fetch_app_list(names, urls, sig_urls, K85_APPREPO_MAX_ASSETS, &count) || count == 0) {
         k85_show_message("No apps found\nin apps_k85os 'app'\nrelease\nA+B=back");
         while (true) {
             k85_input_update();
@@ -83,7 +84,7 @@ static void run_download_menu(void) {
     if (idx < 0 || idx >= count) return;
 
     k85_show_message("Downloading &\nflashing...\nThis may take a while");
-    bool ok = k85_fwflash_from_url(urls[idx], nullptr);
+    bool ok = k85_fwflash_from_url(urls[idx], sig_urls[idx], nullptr);
 
     k85_show_message(ok
         ? "Flashed to free slot!\nActivate via device\nGRUB -> Alt Firmware\nA+B=back"

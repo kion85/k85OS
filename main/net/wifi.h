@@ -1,5 +1,6 @@
-﻿#pragma once
+#pragma once
 #include <stdbool.h>
+#include <stdint.h>
 
 // Инициализация netif+event loop+esp_wifi (вызывать раз при старте, после nvs_flash_init())
 void k85_wifi_init(void);
@@ -24,6 +25,8 @@ bool k85_wifi_is_connected(void);
 
 // "192.168.1.23" или "" если не подключены
 const char *k85_wifi_get_ip_str(void);
+// Возвращает IP STA-интерфейса в сетевом порядке байт (0 если не подключены) - для bind() на конкретный адрес.
+uint32_t k85_wifi_get_ip_addr(void);
 
 // RSSI текущего подключения, 0 если не подключены
 int k85_wifi_get_rssi(void);

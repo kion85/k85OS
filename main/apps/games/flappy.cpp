@@ -1,9 +1,10 @@
-﻿#include "flappy.h"
+#include "flappy.h"
 #include "config.h"
 #include "theme.h"
 #include "input.h"
 #include "power.h"
 #include "common.h"
+#include "list_menu.h"
 
 #include "M5Unified.h"
 #include "freertos/FreeRTOS.h"
@@ -27,11 +28,11 @@ static uint32_t k85_flappy_millis(void) {
 }
 
 // Возвращает true если нужно начать заново (B на экране game over)
-static bool run_flappy_once(void) {
+static bool run_flappy_once(bool night_mode) {
     int W = M5.Display.width();
     int H = M5.Display.height();
-    uint32_t bg = k85_get_bg();
-    uint32_t fg = k85_get_fg();
+    uint32_t bg = night_mode ? 0x0B1026 : 0x70C5CE; // ночь: тёмно-синий / день: классическое голубое небо Flappy Bird
+    uint32_t fg = 0xFFFFFF; // белый читается на обоих фонах одинаково хорошо
 
     float player_x = 30;
     float player_y = H / 2.0f;
@@ -82,7 +83,7 @@ static bool run_flappy_once(void) {
             continue;
         }
 
-        if (k85_btn_b_pressed()) {
+        if (k85_btn_a_pressed()) {
             k85_wake_screen();
             velocity = jump_power;
         }
@@ -171,8 +172,13 @@ static bool run_flappy_once(void) {
 }
 
 void k85_run_flappy(void) {
-    while (run_flappy_once()) {
-        // retry
+    const char *bg_items[] = { "Sky (classic)", "Night" };
+    int choice = k85_run_list_menu("FLAPPY - Background", bg_items, 2, nullptr);
+    if (choice < 0) return; // отмена выбора - выходим без игры
+    bool night_mode = (choice == 1);
+
+    while (run_flappy_once(night_mode)) {
+        // retry - фон остаётся тем же, что выбрали в начале
     }
 }
 

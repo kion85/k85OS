@@ -1,4 +1,4 @@
-﻿#include "firmware_flash.h"
+#include "firmware_flash.h"
 
 #include "esp_https_ota.h"
 #include "esp_http_client.h"
@@ -7,6 +7,8 @@
 #include "esp_ota_ops.h"
 #include "esp_log.h"
 #include "cJSON.h"
+#include "ota_verify.h"
+#include "mbedtls/sha256.h"
 
 #include <cstdio>
 #include <cstring>
@@ -19,6 +21,7 @@ static const char *TAG = "k85_fwflash";
 static esp_ota_handle_t s_ota_handle = 0;
 static const esp_partition_t *s_ota_partition = nullptr;
 static bool s_stream_active = false;
+static mbedtls_sha256_context s_hash_ctx;
 
 const char *k85_fwflash_free_slot_label(void) {
     const esp_partition_t *p = esp_ota_get_next_update_partition(nullptr);
@@ -40,6 +43,9 @@ bool k85_fwflash_stream_begin(void) {
         return false;
     }
 
+    mbedtls_sha256_init(&s_hash_ctx);
+    mbedtls_sha256_starts(&s_hash_ctx, 0);
+
     s_stream_active = true;
     return true;
 }
@@ -51,30 +57,52 @@ bool k85_fwflash_stream_write(const uint8_t *data, size_t len) {
         ESP_LOGE(TAG, "esp_ota_write failed: %d", (int)err);
         return false;
     }
+    mbedtls_sha256_update(&s_hash_ctx, data, len);
     return true;
 }
 
-bool k85_fwflash_stream_end(void) {
+bool k85_fwflash_stream_end_verified(const char *signature_hex) {
     if (!s_stream_active) return false;
-    s_stream_active = false;
 
+    uint8_t hash[32];
+    mbedtls_sha256_finish(&s_hash_ctx, hash);
+    mbedtls_sha256_free(&s_hash_ctx);
+
+    if (!signature_hex || !k85_ota_verify_signature_hex(hash, sizeof(hash), signature_hex)) {
+        ESP_LOGE(TAG, "firmware signature verification FAILED - refusing to keep this image");
+        s_stream_active = false;
+        esp_ota_abort(s_ota_handle);
+        return false;
+    }
+    ESP_LOGI(TAG, "firmware signature verified OK");
+
+    s_stream_active = false;
     esp_err_t err = esp_ota_end(s_ota_handle);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "esp_ota_end failed: %d", (int)err);
         return false;
     }
-    // Намеренно НЕ вызываем esp_ota_set_boot_partition — слот только записан, не активирован
     ESP_LOGI(TAG, "Firmware written to free slot: %s", s_ota_partition ? s_ota_partition->label : "?");
     return true;
+}
+
+bool k85_fwflash_stream_end(void) {
+    ESP_LOGW(TAG, "k85_fwflash_stream_end() called without signature - rejecting by policy");
+    if (s_stream_active) {
+        s_stream_active = false;
+        mbedtls_sha256_free(&s_hash_ctx);
+        esp_ota_abort(s_ota_handle);
+    }
+    return false;
 }
 
 void k85_fwflash_stream_abort(void) {
     if (!s_stream_active) return;
     s_stream_active = false;
+    mbedtls_sha256_free(&s_hash_ctx);
     esp_ota_abort(s_ota_handle);
 }
 
-// ---------- Список релизов k85OS ----------
 struct HttpBuf {
     char *data;
     size_t len;
@@ -93,7 +121,7 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
     return ESP_OK;
 }
 
-bool k85_fwflash_list_available(char out_names[][64], char out_urls[][256], int max, int *out_count) {
+bool k85_fwflash_list_available(char out_names[][64], char out_urls[][256], char out_sig_urls[][256], int max, int *out_count) {
     *out_count = 0;
 
     char url[160];
@@ -138,6 +166,20 @@ bool k85_fwflash_list_available(char out_names[][64], char out_urls[][256], int 
 
         snprintf(out_names[found], 64, "%.63s", name->valuestring);
         snprintf(out_urls[found], 256, "%.255s", dl_url->valuestring);
+        out_sig_urls[found][0] = 0;
+
+        char sig_name[70];
+        snprintf(sig_name, sizeof(sig_name), "%s.sig", name->valuestring);
+        for (int j = 0; j < n; j++) {
+            cJSON *sig_asset = cJSON_GetArrayItem(assets, j);
+            cJSON *sig_name_j = cJSON_GetObjectItem(sig_asset, "name");
+            cJSON *sig_url_j = cJSON_GetObjectItem(sig_asset, "browser_download_url");
+            if (cJSON_IsString(sig_name_j) && cJSON_IsString(sig_url_j) &&
+                strcmp(sig_name_j->valuestring, sig_name) == 0) {
+                snprintf(out_sig_urls[found], 256, "%.255s", sig_url_j->valuestring);
+                break;
+            }
+        }
         found++;
     }
     cJSON_Delete(root);
@@ -145,14 +187,51 @@ bool k85_fwflash_list_available(char out_names[][64], char out_urls[][256], int 
     return found > 0;
 }
 
-bool k85_fwflash_from_url(const char *url, k85_fwflash_progress_cb cb) {
+static bool download_small_text(const char *url, char *out, size_t out_size) {
+    HttpBuf buf = { out, 0, out_size - 1 };
+    out[0] = 0;
+
+    esp_http_client_config_t cfg = {};
+    cfg.url = url;
+    cfg.event_handler = http_event_handler;
+    cfg.user_data = &buf;
+    cfg.crt_bundle_attach = esp_crt_bundle_attach;
+    cfg.timeout_ms = 8000;
+    cfg.user_agent = "k85OS-device";
+
+    esp_http_client_handle_t client = esp_http_client_init(&cfg);
+    if (!client) return false;
+
+    esp_err_t err = esp_http_client_perform(client);
+    int status = esp_http_client_get_status_code(client);
+    esp_http_client_cleanup(client);
+
+    size_t len = strlen(out);
+    while (len > 0 && (out[len - 1] == '\n' || out[len - 1] == '\r' || out[len - 1] == ' ')) {
+        out[--len] = 0;
+    }
+    return err == ESP_OK && status == 200 && len > 0;
+}
+
+bool k85_fwflash_from_url(const char *bin_url, const char *sig_url, k85_fwflash_progress_cb cb) {
     K85HeavyLockGuard heavy_lock(20000);
     if (!heavy_lock.held) return false;
+
+    if (!sig_url || !sig_url[0]) {
+        ESP_LOGE(TAG, "no signature URL provided - refusing unsigned firmware");
+        return false;
+    }
+
+    char signature_hex[136];
+    if (!download_small_text(sig_url, signature_hex, sizeof(signature_hex))) {
+        ESP_LOGE(TAG, "failed to download signature file");
+        return false;
+    }
 
     if (!k85_fwflash_stream_begin()) return false;
 
     esp_http_client_config_t cfg = {};
-    cfg.url = url;
+    cfg.url = bin_url;
     cfg.crt_bundle_attach = esp_crt_bundle_attach;
     cfg.timeout_ms = 30000;
 
@@ -185,5 +264,5 @@ bool k85_fwflash_from_url(const char *url, k85_fwflash_progress_cb cb) {
         k85_fwflash_stream_abort();
         return false;
     }
-    return k85_fwflash_stream_end();
+    return k85_fwflash_stream_end_verified(signature_hex);
 }

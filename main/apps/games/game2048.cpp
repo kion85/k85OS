@@ -1,4 +1,4 @@
-﻿#include "game2048.h"
+#include "game2048.h"
 #include "config.h"
 #include "theme.h"
 #include "battery.h"
@@ -180,9 +180,37 @@ static bool run_2048_once(void) {
         M5.Display.setTextColor(fg, bg);
         M5.Display.setCursor(4, 4);
         M5.Display.printf("2048 score:%d", score);
-        const char *arrows[4] = {"^", ">", "v", "<"};
-        M5.Display.setCursor(W - 16, 4);
-        M5.Display.print(arrows[direction]);
+        // Индикатор направления — крупная стрелка в рамке, не перепутаешь
+        {
+            int box_size = 26;
+            int bx = W - box_size - 4;
+            int by = 2;
+            uint32_t box_bg   = 0x333333;
+            uint32_t box_edge = 0xFFFFFF;
+            uint32_t arrow_col = 0xFFD700; // ярко-жёлтый — хорошо видно на любом фоне
+
+            M5.Display.fillRoundRect(bx, by, box_size, box_size, 4, box_bg);
+            M5.Display.drawRoundRect(bx, by, box_size, box_size, 4, box_edge);
+
+            int cx = bx + box_size / 2;
+            int cy = by + box_size / 2;
+            int r  = box_size / 2 - 5;
+
+            switch (direction) {
+                case 0: // вверх
+                    M5.Display.fillTriangle(cx, cy - r, cx - r, cy + r, cx + r, cy + r, arrow_col);
+                    break;
+                case 1: // вправо
+                    M5.Display.fillTriangle(cx + r, cy, cx - r, cy - r, cx - r, cy + r, arrow_col);
+                    break;
+                case 2: // вниз
+                    M5.Display.fillTriangle(cx, cy + r, cx - r, cy - r, cx + r, cy - r, arrow_col);
+                    break;
+                case 3: // влево
+                    M5.Display.fillTriangle(cx - r, cy, cx + r, cy - r, cx + r, cy + r, arrow_col);
+                    break;
+            }
+        }
         M5.Display.setTextColor(0xAAAAAA, bg);
         M5.Display.setCursor(4, H - 12);
         M5.Display.print("A=dir B=move A+B=exit");

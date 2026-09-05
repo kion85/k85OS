@@ -1,8 +1,10 @@
-﻿// k85OS v4.1 — порт на ESP-IDF C++
+// k85OS v4.1 — порт на ESP-IDF C++
 // Слой 4: core/rtc_ntp + steps/step_counter + core/device + system/system_info + system/logs_screen
 
 #include "M5Unified.h"
 #include "core/config.h"
+#include "core/setup_wizard.h"
+#include "core/cpu_freq.h"
 #include "core/theme.h"
 #include "core/input.h"
 #include "core/power.h"
@@ -67,6 +69,11 @@ extern "C" void app_main(void) {
     k85_post_report_check(post_report, PostCode::LITTLEFS_MOUNT_FAIL, true);
     k85_themes_load_custom();
     k85_log("Config loaded");
+
+    if (!g_config.setup_completed) {
+        k85_run_setup_wizard();
+    }
+    k85_cpu_freq_apply_saved();
 
     k85_ssh_reserve_stack_early();
     k85_heavy_lock_init(); // резервируем стек под SSH-таск заранее, littlefs уже готов

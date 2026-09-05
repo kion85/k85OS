@@ -1,8 +1,9 @@
-﻿#pragma GCC diagnostic push
+#pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat-truncation"
 
 #include "ssh_client.h"
 #include "esp_heap_caps.h"
+#include "log.h"
 #include "ui/common.h"
 #include "ui/text_input.h"
 #include "core/input.h"
@@ -20,9 +21,15 @@
 #include <cstring>
 #include <cstdlib>
 
+#define K85_SSHC_STACK_BYTES 16384
+static_assert(sizeof(StackType_t) == 1,
+    "StackType_t не uint8_t - пересчитай K85_SSHC_STACK_BYTES!");
+static StaticTask_t s_sshc_task_buf;
+static StackType_t *s_sshc_task_stack = nullptr;
+
 // Параметры соединения, вводимые пользователем, и объект синхронизации с
 // вызывающей задачей (меню). Хендшейк/крипто-операции wolfSSH требуют
-// заметно больше стека, чем есть у главной задачи (8KB) — поэтому вся
+// заметно больше стека, чем есть у главной задачи (8KB) - поэтому вся
 // сессия целиком выполняется в отдельной задаче с увеличенным стеком,
 // а вызывающая сторона просто ждёт на семафоре.
 struct K85SshClientParams {
@@ -197,8 +204,10 @@ static void ssh_client_task(void *arg) {
         k85_show_message("SSH handshake...");
         int cret = wolfSSH_connect(ssh);
         if (cret != WS_SUCCESS) {
+            int detail = wolfSSH_get_error(ssh);
+            k85_log("ssh_client: connect failed, cret=%d, detail=%d", cret, detail);
             char buf[64];
-            snprintf(buf, sizeof(buf), "Handshake/auth failed\ncode=%d", cret);
+            snprintf(buf, sizeof(buf), "Handshake failed\ncode=%d/%d", cret, detail);
             k85_ssh_client_error(buf);
             ok = false;
         }
@@ -254,9 +263,23 @@ void k85_run_ssh_client(void) {
     // (главной) задачи — поэтому вся сессия целиком уходит в отдельную
     // задачу с увеличенным стеком, аналогично тому, что мы делали для
     // SSH-сервера.
-    TaskHandle_t task = nullptr;
-    BaseType_t created = xTaskCreate(ssh_client_task, "k85_sshc", 16384, &params, 5, &task);
-    if (created != pdPASS) {
+    k85_log("ssh_client: internal RAM free before task create: %uKB",
+             (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));
+
+    if (!s_sshc_task_stack) {
+        s_sshc_task_stack = (StackType_t *)heap_caps_malloc(K85_SSHC_STACK_BYTES, MALLOC_CAP_SPIRAM);
+        if (!s_sshc_task_stack) {
+            vSemaphoreDelete(params.done_sem);
+            k85_show_message("PSRAM stack alloc\nfailed\nA+B=back");
+            k85_ssh_client_wait_ab();
+            return;
+        }
+    }
+
+    TaskHandle_t task = xTaskCreateStaticPinnedToCore(
+        ssh_client_task, "k85_sshc", K85_SSHC_STACK_BYTES, &params, 5,
+        s_sshc_task_stack, &s_sshc_task_buf, tskNO_AFFINITY);
+    if (task == nullptr) {
         vSemaphoreDelete(params.done_sem);
         k85_show_message("Task create failed\n(out of RAM?)\nA+B=back");
         k85_ssh_client_wait_ab();

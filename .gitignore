@@ -10,3 +10,5 @@ dependencies.lock
 sdkconfig
 ptable_dump*.bin
 pytest_hello_world.py
+
+k85os_ota_private_key.pem

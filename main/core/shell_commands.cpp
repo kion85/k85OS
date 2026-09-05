@@ -55,6 +55,18 @@ static void cmd_imu(char *out, size_t out_size) {
         ax, ay, az, gx, gy, gz);
 }
 
+// Чёрный список: SSH host-ключ и файл конфига (с WiFi-паролями/хешами)
+// никогда не должны отдаваться через shell-команды - иначе любой, кто
+// получил доступ к терминалу/SSH, может скачать их и получить MITM на
+// будущие SSH-сессии или все сохранённые пароли WiFi.
+static bool is_blocked_path(const char *path) {
+    static const char *blocked[] = { "k85_ssh_host_key", "k85os_config.json", "k85_ssh_" };
+    for (size_t i = 0; i < sizeof(blocked) / sizeof(blocked[0]); i++) {
+        if (strstr(path, blocked[i])) return true;
+    }
+    return false;
+}
+
 static void cmd_ls(const char *arg, char *out, size_t out_size) {
     char path[192];
     snprintf(path, sizeof(path), "/littlefs%s%s", (arg[0] && arg[0] != '/') ? "/" : "", arg);
@@ -76,6 +88,10 @@ static void cmd_ls(const char *arg, char *out, size_t out_size) {
 }
 
 static void cmd_cat(const char *arg, char *out, size_t out_size) {
+    if (is_blocked_path(arg)) {
+        snprintf(out, out_size, "cat: access denied\r\n");
+        return;
+    }
     char path[192];
     snprintf(path, sizeof(path), "/littlefs/%s", arg);
     FILE *f = fopen(path, "r");

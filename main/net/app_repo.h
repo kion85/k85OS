@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <stdbool.h>
 #include <stddef.h>
 
@@ -11,4 +11,6 @@ bool k85_apprepo_fetch_uefi_theme_list(char out_names[][64], char out_urls[][256
 // Скачивает файл по URL и сохраняет в dest_path.
 bool k85_apprepo_download_file(const char *url, const char *dest_path);
 // Получает список .bin файлов игр/приложений из релиза с тегом "app" в kion85/apps_k85os.
-bool k85_apprepo_fetch_app_list(char out_names[][64], char out_urls[][256], int max, int *out_count);
+// out_sig_urls - URL подписи (<name>.sig) рядом с каждым файлом, пустая
+// строка если подписи нет (тогда установка будет отклонена).
+bool k85_apprepo_fetch_app_list(char out_names[][64], char out_urls[][256], char out_sig_urls[][256], int max, int *out_count);

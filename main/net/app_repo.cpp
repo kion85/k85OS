@@ -1,4 +1,4 @@
-﻿#include "app_repo.h"
+#include "app_repo.h"
 
 #include "esp_https_ota.h"
 #include "esp_http_client.h"
@@ -120,7 +120,7 @@ bool k85_apprepo_fetch_uefi_theme_list(char out_names[][64], char out_urls[][256
     return found > 0;
 }
 
-bool k85_apprepo_fetch_app_list(char out_names[][64], char out_urls[][256], int max, int *out_count) {
+bool k85_apprepo_fetch_app_list(char out_names[][64], char out_urls[][256], char out_sig_urls[][256], int max, int *out_count) {
     *out_count = 0;
 
     K85HeavyLockGuard heavy_lock(15000);
@@ -184,12 +184,31 @@ bool k85_apprepo_fetch_app_list(char out_names[][64], char out_urls[][256], int 
         if (!cJSON_IsString(name) || !cJSON_IsString(dl_url)) continue;
         snprintf(out_names[found], 64, "%s", name->valuestring);
         snprintf(out_urls[found], 256, "%s", dl_url->valuestring);
+
+        out_sig_urls[found][0] = 0;
+        char sig_name[70];
+        snprintf(sig_name, sizeof(sig_name), "%s.sig", name->valuestring);
+        for (int j = 0; j < n; j++) {
+            cJSON *sig_asset = cJSON_GetArrayItem(assets, j);
+            cJSON *sig_name_j = cJSON_GetObjectItem(sig_asset, "name");
+            cJSON *sig_url_j = cJSON_GetObjectItem(sig_asset, "browser_download_url");
+            if (cJSON_IsString(sig_name_j) && cJSON_IsString(sig_url_j) &&
+                strcmp(sig_name_j->valuestring, sig_name) == 0) {
+                snprintf(out_sig_urls[found], 256, "%s", sig_url_j->valuestring);
+                break;
+            }
+        }
         found++;
     }
     cJSON_Delete(root);
     *out_count = found;
     return found > 0;
 }
+
+// Лимит размера скачиваемого файла - без него сервер (или подмена DNS/MITM
+// без валидного сертификата - хотя crt_bundle это уже блокирует) может
+// отдавать бесконечный поток и забить LittleFS до отказа.
+#define K85_APPREPO_MAX_DOWNLOAD_BYTES (4 * 1024 * 1024) // 4MB - с запасом под самый крупный ожидаемый .bin
 
 bool k85_apprepo_download_file(const char *url, const char *dest_path) {
     esp_http_client_config_t cfg = {};
@@ -208,6 +227,15 @@ bool k85_apprepo_download_file(const char *url, const char *dest_path) {
     }
     esp_http_client_fetch_headers(client);
 
+    int status = esp_http_client_get_status_code(client);
+    if (status != 200) {
+        // Не 200 OK - например, 404-страница вместо реального файла.
+        // Раньше это молча сохранялось как "файл", теперь явный провал.
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        return false;
+    }
+
     FILE *f = fopen(dest_path, "wb");
     if (!f) {
         esp_http_client_close(client);
@@ -218,12 +246,19 @@ bool k85_apprepo_download_file(const char *url, const char *dest_path) {
     char buf[512];
     int r;
     bool ok = true;
+    long total = 0;
     while ((r = esp_http_client_read(client, buf, sizeof(buf))) > 0) {
+        total += r;
+        if (total > K85_APPREPO_MAX_DOWNLOAD_BYTES) {
+            ok = false;
+            break;
+        }
         fwrite(buf, 1, r, f);
     }
     if (r < 0) ok = false;
 
     fclose(f);
+    if (!ok) remove(dest_path); // не оставляем обрезанный/незавершённый файл на диске
     esp_http_client_close(client);
     esp_http_client_cleanup(client);
     return ok;

@@ -50,6 +50,9 @@ bool k85_text_input(const char *prompt, const char *initial, char *out, size_t o
     const int hold_ms = 400;
     bool is_ru = false;
     bool is_caps = false;
+    int64_t last_activity_ms = k85_ti_ticks_ms();
+    bool kb_hidden = false;
+    #define K85_TI_KB_IDLE_MS 5000
 
     int W = M5.Display.width();
     int H = M5.Display.height();
@@ -75,6 +78,17 @@ bool k85_text_input(const char *prompt, const char *initial, char *out, size_t o
             M5.Display.printf("%s_", text);
         } else {
             M5.Display.printf("...%s_", text + (len - 13));
+        }
+
+        if (kb_hidden) {
+            M5.Display.setTextSize(1);
+            M5.Display.setTextColor(0x666666, bg);
+            const char *hint = "(press any button)";
+            int hx = (W - (int)strlen(hint) * 6) / 2;
+            M5.Display.setCursor(hx, H / 2);
+            M5.Display.print(hint);
+            k85_draw_battery_icon();
+            return;
         }
 
         int top = 38;
@@ -109,6 +123,21 @@ bool k85_text_input(const char *prompt, const char *initial, char *out, size_t o
         k85_input_update();
         int64_t now = k85_ti_ticks_ms();
         KbLayout kb = is_ru ? kb_layout_ru() : kb_layout_en();
+
+        bool any_input = k85_btn_a_is_down() || k85_btn_b_is_down();
+        if (any_input) {
+            if (kb_hidden) {
+                kb_hidden = false;
+                last_activity_ms = now;
+                draw();
+                vTaskDelay(pdMS_TO_TICKS(30));
+                continue; // это нажатие только "будит" клавиатуру, не вводит символ
+            }
+            last_activity_ms = now;
+        } else if (!kb_hidden && (now - last_activity_ms) >= K85_TI_KB_IDLE_MS) {
+            kb_hidden = true;
+            draw();
+        }
 
         bool a_down_now = k85_btn_a_is_down();
         if (a_down_now && !a_was_down) {

@@ -1,4 +1,4 @@
-﻿#include "wifi_hotspot.h"
+#include "wifi_hotspot.h"
 #include "wifi.h"
 #include "common.h"
 #include "power.h"
@@ -32,9 +32,31 @@
 
 #define K85_UPLOAD_BASE_PATH "/littlefs"
 #define K85_FM_MAX_ENTRIES 40
+#define K85_MAX_UPLOAD_BYTES (2 * 1024 * 1024)
 
 static esp_netif_t *s_ap_netif = nullptr;
 static char s_web_access_key[16];
+static int s_failed_attempts = 0;
+static int64_t s_lockout_until_us = 0;
+static int64_t s_conn_deadline_us = 0;
+
+#define K85_HOTSPOT_TASK_STACK_BYTES 8192
+static_assert(sizeof(StackType_t) == 1,
+    "StackType_t не uint8_t - пересчитай K85_HOTSPOT_TASK_STACK_BYTES!");
+static StaticTask_t s_hotspot_task_buf;
+static StackType_t *s_hotspot_task_stack = nullptr;
+static TaskHandle_t s_hotspot_task_handle = nullptr;
+static volatile bool s_hotspot_task_running = false;
+static int s_hotspot_listen_fd = -1;
+static char s_hotspot_ssid[32] = "";
+
+static bool const_time_streq(const char *a, const char *b) {
+    size_t la = strlen(a), lb = strlen(b);
+    volatile unsigned char diff = (unsigned char)(la != lb);
+    size_t n = la < lb ? la : lb;
+    for (size_t i = 0; i < n; i++) diff |= (unsigned char)a[i] ^ (unsigned char)b[i];
+    return diff == 0;
+}
 
 static void gen_random_string(char *out, int len, bool digits_only) {
     static const char charset_full[] = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
@@ -68,7 +90,21 @@ static bool sanitize_relpath(const char *name) {
     if (!name[0]) return false;
     if (strstr(name, "..")) return false;
     if (name[0] == '/') return false;
+    for (const char *p = name; *p; p++) {
+        if ((unsigned char)*p < 0x20) return false;
+    }
     return true;
+}
+
+// Тот же чёрный список, что и в SSH-shell (shell_commands.cpp) - SSH-ключ
+// и файл конфига (WiFi-пароли, хеши) не должны отдаваться через веб-морду
+// ни при каких обстоятельствах, независимо от того, знает ли клиент access key.
+static bool is_blocked_download_path(const char *path) {
+    static const char *blocked[] = { "k85_ssh_host_key", "k85os_config.json", "k85_ssh_" };
+    for (size_t i = 0; i < sizeof(blocked) / sizeof(blocked[0]); i++) {
+        if (strstr(path, blocked[i])) return true;
+    }
+    return false;
 }
 
 static void send_http_response(int fd, const char *status, const char *content_type, const char *body) {
@@ -102,10 +138,58 @@ static bool get_query_param(const char *query, const char *key, char *out, size_
     return true;
 }
 
-static bool check_access_key(const char *query) {
+// Ищет "Cookie: ... k85key=VALUE ..." в блоке сырых заголовков запроса.
+static bool get_cookie_value(const char *headers_block, size_t headers_len, const char *name, char *out, size_t out_size) {
+    const char *cookie_hdr = nullptr;
+    for (size_t i = 0; i + 7 < headers_len; i++) {
+        if (strncasecmp(headers_block + i, "Cookie:", 7) == 0) { cookie_hdr = headers_block + i + 7; break; }
+    }
+    if (!cookie_hdr) return false;
+
+    char name_eq[40];
+    snprintf(name_eq, sizeof(name_eq), "%s=", name);
+    const char *p = strstr(cookie_hdr, name_eq);
+    if (!p) return false;
+    p += strlen(name_eq);
+    size_t len = 0;
+    while (p[len] && p[len] != ';' && p[len] != '\r' && p[len] != '\n') len++;
+    if (len >= out_size) len = out_size - 1;
+    memcpy(out, p, len);
+    out[len] = 0;
+    return true;
+}
+
+// Проверяет доступ: сначала по cookie (обычная навигация после логина -
+// ключ никогда не виден в адресной строке, все внутренние ссылки его
+// больше не содержат вообще), с фоллбэком на query-параметр ?key= только
+// для случая, если кто-то вручную ввёл/сохранил старую ссылку.
+static bool check_access_key(const char *headers_block, size_t headers_len, const char *query) {
+    int64_t now = esp_timer_get_time();
+    if (now < s_lockout_until_us) return false;
+
+    char cookie_key[32] = {0};
+    if (get_cookie_value(headers_block, headers_len, "k85key", cookie_key, sizeof(cookie_key))) {
+        if (const_time_streq(cookie_key, s_web_access_key)) {
+            s_failed_attempts = 0;
+            return true;
+        }
+    }
+
     char key[32] = {0};
     if (!get_query_param(query, "key", key, sizeof(key))) return false;
-    return strcmp(key, s_web_access_key) == 0;
+
+    bool ok = const_time_streq(key, s_web_access_key);
+    if (!ok) {
+        s_failed_attempts++;
+        int shift = s_failed_attempts > 5 ? 5 : s_failed_attempts - 1;
+        int delay_s = 1 << shift;
+        if (delay_s > 30) delay_s = 30;
+        s_lockout_until_us = now + (int64_t)delay_s * 1000000;
+        k85_log("web-fm: bad access key attempt #%d, locked %ds", s_failed_attempts, delay_s);
+    } else {
+        s_failed_attempts = 0;
+    }
+    return ok;
 }
 
 static const char *k85_login_page_html =
@@ -118,7 +202,7 @@ static const char *k85_login_page_html =
     "</style></head><body>"
     "<h1>k85OS Access</h1>"
     "<p>Enter the access code shown on the device screen.</p>"
-    "<form method=GET action=/>"
+    "<form method=POST action=/login>"
     "<input type=text name=key placeholder='access code' autofocus>"
     "<br><button type=submit>Enter</button>"
     "</form></body></html>";
@@ -165,10 +249,19 @@ static void sanitize_filename(char *name) {
     if (slash && slash + 1 > base) base = slash + 1;
     if (bslash && bslash + 1 > base) base = bslash + 1;
     if (base != name) memmove(name, base, strlen(base) + 1);
+
+    char *w = name;
+    for (char *r = name; *r; r++) {
+        unsigned char c = (unsigned char)*r;
+        if (c < 0x20) continue;
+        if (c == '<' || c == '>' || c == '&' || c == '"' || c == 39) continue;
+        *w++ = (char)c;
+    }
+    *w = 0;
+
     if (name[0] == 0) strncpy(name, "upload.bin", 32);
 }
 
-// ---------- ?????????????? upload ???????????? (?? LittleFS) ----------
 static bool handle_upload_body(int conn_fd, const char *header,
                                 const char *initial_body, long initial_body_len,
                                 const char *target_dir) {
@@ -198,6 +291,7 @@ static bool handle_upload_body(int conn_fd, const char *header,
 
     long part_headers_end = find_bytes(buf, have, "\r\n\r\n", 4);
     while (part_headers_end < 0) {
+        if (esp_timer_get_time() > s_conn_deadline_us) return false;
         if (have >= (long)sizeof(buf) - 1) return false;
         int r = recv(conn_fd, buf + have, sizeof(buf) - have, 0);
         if (r <= 0) return false;
@@ -235,6 +329,7 @@ static bool handle_upload_body(int conn_fd, const char *header,
     have = pending_len;
 
     bool ok = false;
+    long total_written = 0;
     while (true) {
         long dpos = find_bytes(buf, have, delim, delim_len);
         if (dpos >= 0) {
@@ -243,15 +338,19 @@ static bool handle_upload_body(int conn_fd, const char *header,
                 write_len -= 2;
             }
             if (write_len > 0) fwrite(buf, 1, write_len, f);
+            total_written += write_len;
             ok = true;
             break;
         }
         long safe_len = have - (delim_len + 2);
         if (safe_len > 0) {
             fwrite(buf, 1, safe_len, f);
+            total_written += safe_len;
             memmove(buf, buf + safe_len, have - safe_len);
             have -= safe_len;
         }
+        if (total_written > K85_MAX_UPLOAD_BYTES) { k85_log("upload: exceeded max size, aborting"); ok = false; break; }
+        if (esp_timer_get_time() > s_conn_deadline_us) break;
         if (have >= (long)sizeof(buf)) break;
         int r = recv(conn_fd, buf + have, sizeof(buf) - have, 0);
         if (r <= 0) break;
@@ -268,7 +367,11 @@ static bool handle_upload_body(int conn_fd, const char *header,
     return true;
 }
 
-// ---------- Upload ???????????????? ??? ?????????????????? ?????????? ?? ?????????????????? OTA-????????, ?????? ???????????????????? ?? LittleFS ----------
+// Форма теперь содержит ДВА поля: file (бинарник) и sig (hex-подпись).
+// Браузеры отправляют части в порядке полей формы - у нас file идёт первым,
+// sig вторым. Сначала стримим file до первой границы (как раньше), затем
+// доразбираем оставшийся буфер (и при нужде дочитываем ещё) чтобы найти
+// значение поля sig между его заголовками и следующей границей.
 static bool handle_firmware_upload_body(int conn_fd, const char *header,
                                          const char *initial_body, long initial_body_len) {
     const char *b = strstr(header, "boundary=");
@@ -297,6 +400,7 @@ static bool handle_firmware_upload_body(int conn_fd, const char *header,
 
     long part_headers_end = find_bytes(buf, have, "\r\n\r\n", 4);
     while (part_headers_end < 0) {
+        if (esp_timer_get_time() > s_conn_deadline_us) return false;
         if (have >= (long)sizeof(buf) - 1) return false;
         int r = recv(conn_fd, buf + have, sizeof(buf) - have, 0);
         if (r <= 0) return false;
@@ -312,6 +416,7 @@ static bool handle_firmware_upload_body(int conn_fd, const char *header,
     if (!k85_fwflash_stream_begin()) return false;
 
     bool ok = false;
+    long after_file_pos = -1;
     while (true) {
         long dpos = find_bytes(buf, have, delim, delim_len);
         if (dpos >= 0) {
@@ -323,6 +428,7 @@ static bool handle_firmware_upload_body(int conn_fd, const char *header,
                 if (!k85_fwflash_stream_write((const uint8_t *)buf, write_len)) { k85_fwflash_stream_abort(); return false; }
             }
             ok = true;
+            after_file_pos = dpos + delim_len;
             break;
         }
         long safe_len = have - (delim_len + 2);
@@ -331,6 +437,7 @@ static bool handle_firmware_upload_body(int conn_fd, const char *header,
             memmove(buf, buf + safe_len, have - safe_len);
             have -= safe_len;
         }
+        if (esp_timer_get_time() > s_conn_deadline_us) break;
         if (have >= (long)sizeof(buf)) break;
         int r = recv(conn_fd, buf + have, sizeof(buf) - have, 0);
         if (r <= 0) break;
@@ -342,13 +449,70 @@ static bool handle_firmware_upload_body(int conn_fd, const char *header,
         k85_log("firmware upload: incomplete, aborted");
         return false;
     }
-    bool ended = k85_fwflash_stream_end();
-    k85_log("firmware upload: %s", ended ? "written to free slot" : "write failed");
+
+    // Разбираем второй multipart-блок (поле sig): оставшиеся данные после
+    // границы файла - от него до конца заголовков этой части, потом до
+    // следующей границы - это и есть значение подписи.
+    if (after_file_pos > 0 && after_file_pos <= have) {
+        long remaining = have - after_file_pos;
+        if (remaining > 0) memmove(buf, buf + after_file_pos, remaining);
+        have = remaining;
+    } else {
+        have = 0;
+    }
+
+    long sig_headers_end = find_bytes(buf, have, "\r\n\r\n", 4);
+    while (sig_headers_end < 0) {
+        if (esp_timer_get_time() > s_conn_deadline_us) break;
+        if (have >= (long)sizeof(buf) - 1) break;
+        int r = recv(conn_fd, buf + have, sizeof(buf) - have, 0);
+        if (r <= 0) break;
+        have += r;
+        sig_headers_end = find_bytes(buf, have, "\r\n\r\n", 4);
+    }
+
+    char signature_hex[136] = {0};
+    if (sig_headers_end >= 0) {
+        long sig_data_start = sig_headers_end + 4;
+        long sig_pending = have - sig_data_start;
+        if (sig_pending > 0) memmove(buf, buf + sig_data_start, sig_pending);
+        have = sig_pending;
+
+        long sig_end = find_bytes(buf, have, delim, delim_len);
+        while (sig_end < 0 && have < (long)sizeof(buf) - 1) {
+            if (esp_timer_get_time() > s_conn_deadline_us) break;
+            int r = recv(conn_fd, buf + have, sizeof(buf) - have, 0);
+            if (r <= 0) break;
+            have += r;
+            sig_end = find_bytes(buf, have, delim, delim_len);
+        }
+        if (sig_end < 0) sig_end = have; // на крайний случай - что есть, то и берём
+
+        long sig_len = sig_end;
+        if (sig_len >= 2 && buf[sig_len - 2] == '\r' && buf[sig_len - 1] == '\n') sig_len -= 2;
+        if (sig_len > 0 && sig_len < (long)sizeof(signature_hex)) {
+            memcpy(signature_hex, buf, sig_len);
+            signature_hex[sig_len] = 0;
+        }
+    }
+
+    if (signature_hex[0] == 0) {
+        k85_fwflash_stream_abort();
+        k85_log("firmware upload: no signature provided, rejecting");
+        return false;
+    }
+
+    bool ended = k85_fwflash_stream_end_verified(signature_hex);
+    k85_log("firmware upload: %s", ended ? "written to free slot" : "verification/write failed");
     return ended;
 }
 
 static bool handle_download(int conn_fd, const char *relpath) {
     if (!sanitize_relpath(relpath)) return false;
+    if (is_blocked_download_path(relpath)) {
+        k85_log("web-fm: blocked download attempt: %s", relpath);
+        return false;
+    }
     char full_path[256];
     snprintf(full_path, sizeof(full_path), "%s/%s", K85_UPLOAD_BASE_PATH, relpath);
 
@@ -385,7 +549,9 @@ static void get_parent_dir(const char *dir, char *out, size_t out_size) {
     snprintf(out, out_size, "%s", tmp);
 }
 
-static void build_index_page(char *out, size_t out_size, const char *ssid, const char *key, const char *dir) {
+// Ключ больше НЕ передаётся параметром - все ссылки строятся без &key=,
+// авторизация полностью на cookie k85key (см. check_access_key выше).
+static void build_index_page(char *out, size_t out_size, const char *ssid, const char *dir) {
     int64_t uptime_s = esp_timer_get_time() / 1000000;
 
     size_t used = 0;
@@ -412,17 +578,15 @@ static void build_index_page(char *out, size_t out_size, const char *ssid, const
         "<b>Uptime:</b> %llds<br>"
         "<b>Free heap:</b> %lu bytes"
         "</div>"
-        "<p><a class=fw href='/firmware?key=%s'>&#9889; Firmware update</a></p>"
-        "<p><a href='/upload?dir=%s&key=%s'>+ Upload file here</a></p>"
+        "<p><a class=fw href='/firmware'>&#9889; Firmware update</a></p>"
+        "<p><a href='/upload?dir=%s'>+ Upload file here</a></p>"
         "<form method=GET action=/mkdir style='margin:8px 0'>"
         "<input type=hidden name=dir value='%s'>"
-        "<input type=hidden name=key value='%s'>"
         "<input type=text name=name placeholder='new folder name'>"
         "<button type=submit>+ New folder here</button></form>"
         "<table><tr><th>Name</th><th>Size</th><th>Actions</th></tr>",
         ssid, (long long)uptime_s, (unsigned long)esp_get_free_heap_size(),
-        key,
-        dir, key, dir, key);
+        dir, dir);
 
     if (written0 < 0) return;
     used = strlen(out);
@@ -430,8 +594,8 @@ static void build_index_page(char *out, size_t out_size, const char *ssid, const
     if (dir[0]) {
         char row[256];
         int w = snprintf(row, sizeof(row),
-            "<tr><td colspan=3><a class=dir href='/?dir=%s&key=%s'>.. (up)</a></td></tr>",
-            parent, key);
+            "<tr><td colspan=3><a class=dir href='/?dir=%s'>.. (up)</a></td></tr>",
+            parent);
         if (w > 0 && used + (size_t)w < out_size - 300) {
             memcpy(out + used, row, w); used += w; out[used] = 0;
         }
@@ -458,8 +622,8 @@ static void build_index_page(char *out, size_t out_size, const char *ssid, const
 
             char row[300];
             int w = snprintf(row, sizeof(row),
-                "<tr><td colspan=3><a class=dir href='/?dir=%s&key=%s'>[%s/]</a></td></tr>",
-                child_rel, key, ent->d_name);
+                "<tr><td colspan=3><a class=dir href='/?dir=%s'>[%s/]</a></td></tr>",
+                child_rel, ent->d_name);
             if (w > 0 && used + (size_t)w < out_size - 300) {
                 memcpy(out + used, row, w); used += w; out[used] = 0;
                 count++;
@@ -486,16 +650,15 @@ static void build_index_page(char *out, size_t out_size, const char *ssid, const
             char row[600];
             int written = snprintf(row, sizeof(row),
                 "<tr><td>%.40s</td><td>%ldB</td><td>"
-                "<a href='/download?name=%.100s&key=%s'>DL</a>"
+                "<a href='/download?name=%.100s'>DL</a>"
                 "<form style='display:inline' method=GET action=/rename>"
                 "<input type=hidden name=old value='%.100s'>"
-                "<input type=hidden name=key value='%s'>"
                 "<input type=hidden name=dir value='%s'>"
                 "<input type=text name=new placeholder='new name' style='width:80px'>"
                 "<button type=submit>Ren</button></form> "
-                "<a class=del href='/delete?name=%.100s&key=%s' onclick=\"return confirm('Delete %.30s?')\">Del</a>"
+                "<a class=del href='/delete?name=%.100s' onclick=\"return confirm('Delete %.30s?')\">Del</a>"
                 "</td></tr>",
-                ent->d_name, (long)st.st_size, child_rel, key, child_rel, key, dir, child_rel, key, ent->d_name);
+                ent->d_name, (long)st.st_size, child_rel, child_rel, dir, child_rel, ent->d_name);
 
             if (written > 0 && used + (size_t)written < out_size - 200) {
                 memcpy(out + used, row, written);
@@ -512,30 +675,30 @@ static void build_index_page(char *out, size_t out_size, const char *ssid, const
     if (used + tail_len < out_size) memcpy(out + used, tail, tail_len + 1);
 }
 
-static void build_upload_form(char *out, size_t out_size, const char *key, const char *dir) {
+static void build_upload_form(char *out, size_t out_size, const char *dir) {
     snprintf(out, out_size,
         "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>k85OS Upload</title>"
         "<style>body{background:#111;color:#0f0;font-family:monospace;padding:20px}"
         "h1{color:#0ff}input,button{font-size:16px;margin-top:10px}"
         "a{color:#0ff}</style></head><body>"
         "<h1>Upload to /littlefs%s%s</h1>"
-        "<form method=POST action='/upload?dir=%s&key=%s' enctype=multipart/form-data>"
+        "<form method=POST action='/upload?dir=%s' enctype=multipart/form-data>"
         "<input type=file name=file><br>"
         "<button type=submit>Upload</button>"
         "</form>"
-        "<p><a href='/?dir=%s&key=%s'>Back</a></p></body></html>",
-        dir[0] ? "/" : "", dir, dir, key, dir, key);
+        "<p><a href='/?dir=%s'>Back</a></p></body></html>",
+        dir[0] ? "/" : "", dir, dir, dir);
 }
 
-// ---------- UEFI-style ???????????????? ???????????????????? ???????????????? ----------
-static void build_firmware_page(char *out, size_t out_size, const char *key) {
+static void build_firmware_page(char *out, size_t out_size) {
     const esp_partition_t *running = esp_ota_get_running_partition();
     const char *free_slot = k85_fwflash_free_slot_label();
 
     static char names[K85_FW_LIST_MAX][64];
     static char urls[K85_FW_LIST_MAX][256];
+    static char sig_urls[K85_FW_LIST_MAX][256];
     int count = 0;
-    bool listed = k85_fwflash_list_available(names, urls, K85_FW_LIST_MAX, &count);
+    bool listed = k85_fwflash_list_available(names, urls, sig_urls, K85_FW_LIST_MAX, &count);
 
     size_t used = 0;
     int w = snprintf(out, out_size,
@@ -565,8 +728,8 @@ static void build_firmware_page(char *out, size_t out_size, const char *key) {
         if (w2 > 0) used += w2;
         for (int i = 0; i < count; i++) {
             int wr = snprintf(out + used, out_size - used,
-                "<a class=fw href='/firmware/pull?asset=%d&key=%s' onclick=\"return confirm('Flash %s into free slot?')\">%s</a>",
-                i, key, names[i], names[i]);
+                "<a class=fw href='/firmware/pull?asset=%d' onclick=\"return confirm('Flash %s into free slot?')\">%s</a>",
+                i, names[i], names[i]);
             if (wr > 0 && used + (size_t)wr < out_size) used += wr;
         }
     } else {
@@ -576,21 +739,24 @@ static void build_firmware_page(char *out, size_t out_size, const char *key) {
 
     int w3 = snprintf(out + used, out_size - used,
         "<h2>Or upload your own .bin</h2>"
-        "<form method=POST action='/firmware/upload?key=%s' enctype=multipart/form-data>"
+        "<p style='font-size:12px;color:#888'>Requires a valid signature - unsigned builds are refused.</p>"
+        "<form method=POST action='/firmware/upload' enctype=multipart/form-data>"
         "<input type=file name=file accept='.bin'><br>"
+        "<input type=text name=sig placeholder='signature (128 hex chars)' style='width:100%%;margin-top:6px'><br>"
         "<button type=submit onclick=\"return confirm('Flash uploaded file into free slot?')\">Upload & Flash</button>"
         "</form>"
-        "<p><a href='/?key=%s'>&larr; Back to files</a></p></body></html>",
-        key, key);
+        "<p><a href='/'>&larr; Back to files</a></p></body></html>");
     if (w3 > 0 && used + (size_t)w3 < out_size) used += w3;
 }
 
 static void handle_connection(int conn_fd, const char *ssid) {
+    s_conn_deadline_us = esp_timer_get_time() + 20LL * 1000000;
     static char req_buf[4096];
     long req_len = 0;
     long headers_end = -1;
 
     while (headers_end < 0 && req_len < (long)sizeof(req_buf) - 1) {
+        if (esp_timer_get_time() > s_conn_deadline_us) return;
         int r = recv(conn_fd, req_buf + req_len, sizeof(req_buf) - 1 - req_len, 0);
         if (r <= 0) break;
         req_len += r;
@@ -616,7 +782,38 @@ static void handle_connection(int conn_fd, const char *ssid) {
         snprintf(path, sizeof(path), "%s", path_full);
     }
 
-    if (!check_access_key(query)) {
+    bool is_post_early = (strcmp(method, "POST") == 0);
+    if (is_post_early && strcmp(path, "/login") == 0) {
+        int64_t now_login = esp_timer_get_time();
+        if (now_login < s_lockout_until_us) {
+            send_http_response(conn_fd, "401 Unauthorized", "text/html", k85_login_page_html);
+            return;
+        }
+        const char *body_ptr = req_buf + headers_end + 4;
+        char submitted_key[32] = {0};
+        get_query_param(body_ptr, "key", submitted_key, sizeof(submitted_key));
+
+        if (const_time_streq(submitted_key, s_web_access_key)) {
+            s_failed_attempts = 0;
+            char resp_header[256];
+            snprintf(resp_header, sizeof(resp_header),
+                "HTTP/1.1 302 Found\r\nSet-Cookie: k85key=%s; Path=/\r\nLocation: /\r\nConnection: close\r\n\r\n",
+                s_web_access_key);
+            send(conn_fd, resp_header, strlen(resp_header), 0);
+            return;
+        } else {
+            s_failed_attempts++;
+            int shift = s_failed_attempts > 5 ? 5 : s_failed_attempts - 1;
+            int delay_s = 1 << shift;
+            if (delay_s > 30) delay_s = 30;
+            s_lockout_until_us = now_login + (int64_t)delay_s * 1000000;
+            k85_log("web-fm: bad login POST attempt #%d, locked %ds", s_failed_attempts, delay_s);
+            send_http_response(conn_fd, "401 Unauthorized", "text/html", k85_login_page_html);
+            return;
+        }
+    }
+
+    if (!check_access_key(req_buf, (size_t)headers_end, query)) {
         send_http_response(conn_fd, "401 Unauthorized", "text/html", k85_login_page_html);
         return;
     }
@@ -628,8 +825,11 @@ static void handle_connection(int conn_fd, const char *ssid) {
     bool is_post = (strcmp(method, "POST") == 0);
 
     if (strcmp(path, "/firmware") == 0) {
-        static char *body = (char *)heap_caps_malloc(6144, MALLOC_CAP_SPIRAM);
-        build_firmware_page(body, 6144, s_web_access_key);
+        static char *body = nullptr;
+        if (!body) body = (char *)heap_caps_malloc(6144, MALLOC_CAP_SPIRAM);
+        if (!body) body = (char *)heap_caps_malloc(6144, MALLOC_CAP_INTERNAL); // fallback - PSRAM может быть фрагментирована
+        if (!body) { send_http_response(conn_fd, "500 Internal Server Error", "text/html", k85_generic_fail_html); return; }
+        build_firmware_page(body, 6144);
         send_http_response(conn_fd, "200 OK", "text/html", body);
     } else if (strcmp(path, "/firmware/pull") == 0) {
         char asset_str[8] = {0};
@@ -638,10 +838,11 @@ static void handle_connection(int conn_fd, const char *ssid) {
 
         static char names[K85_FW_LIST_MAX][64];
         static char urls[K85_FW_LIST_MAX][256];
+        static char sig_urls[K85_FW_LIST_MAX][256];
         int count = 0;
         bool ok = false;
-        if (k85_fwflash_list_available(names, urls, K85_FW_LIST_MAX, &count) && idx >= 0 && idx < count) {
-            ok = k85_fwflash_from_url(urls[idx], nullptr);
+        if (k85_fwflash_list_available(names, urls, sig_urls, K85_FW_LIST_MAX, &count) && idx >= 0 && idx < count) {
+            ok = k85_fwflash_from_url(urls[idx], sig_urls[idx], nullptr);
         }
         send_http_response(conn_fd, ok ? "200 OK" : "500 Internal Server Error", "text/html",
                             ok ? "<html><body style='background:#000020;color:#0f0;font-family:monospace;padding:20px'>"
@@ -660,8 +861,11 @@ static void handle_connection(int conn_fd, const char *ssid) {
         send_http_response(conn_fd, ok ? "200 OK" : "400 Bad Request", "text/html",
                             ok ? k85_upload_ok_html : k85_upload_fail_html);
     } else if (strcmp(path, "/upload") == 0) {
-        static char *body = (char *)heap_caps_malloc(512, MALLOC_CAP_SPIRAM);
-        build_upload_form(body, 512, s_web_access_key, dir);
+        static char *body = nullptr;
+        if (!body) body = (char *)heap_caps_malloc(512, MALLOC_CAP_SPIRAM);
+        if (!body) body = (char *)heap_caps_malloc(512, MALLOC_CAP_INTERNAL);
+        if (!body) { send_http_response(conn_fd, "500 Internal Server Error", "text/html", k85_generic_fail_html); return; }
+        build_upload_form(body, 512, dir);
         send_http_response(conn_fd, "200 OK", "text/html", body);
     } else if (strcmp(path, "/download") == 0) {
         char name[192] = {0};
@@ -680,7 +884,7 @@ static void handle_connection(int conn_fd, const char *ssid) {
             k85_log("web-fm: mkdir %s", full_path);
         }
         char redir[256];
-        snprintf(redir, sizeof(redir), "/?dir=%s&key=%s", dir, s_web_access_key);
+        snprintf(redir, sizeof(redir), "/?dir=%s", dir);
         send_http_redirect(conn_fd, redir);
     } else if (strcmp(path, "/delete") == 0) {
         char name[192] = {0};
@@ -692,7 +896,7 @@ static void handle_connection(int conn_fd, const char *ssid) {
             k85_log("web-fm: deleted %s", full_path);
         }
         char redir[256];
-        snprintf(redir, sizeof(redir), "/?dir=%s&key=%s", dir, s_web_access_key);
+        snprintf(redir, sizeof(redir), "/?dir=%s", dir);
         send_http_redirect(conn_fd, redir);
     } else if (strcmp(path, "/rename") == 0) {
         char old_name[192] = {0}, new_name[128] = {0};
@@ -707,17 +911,46 @@ static void handle_connection(int conn_fd, const char *ssid) {
             k85_log("web-fm: renamed %s -> %s", src, dst);
         }
         char redir[256];
-        snprintf(redir, sizeof(redir), "/?dir=%s&key=%s", dir, s_web_access_key);
+        snprintf(redir, sizeof(redir), "/?dir=%s", dir);
         send_http_redirect(conn_fd, redir);
     } else {
-        static char *body = (char *)heap_caps_malloc(8192, MALLOC_CAP_SPIRAM);
+        static char *body = nullptr;
+        if (!body) body = (char *)heap_caps_malloc(8192, MALLOC_CAP_SPIRAM);
+        if (!body) body = (char *)heap_caps_malloc(8192, MALLOC_CAP_INTERNAL); // fallback - PSRAM может быть фрагментирована
         if (!body) {
-            ESP_LOGE("k85_web", "wifi_hotspot: body alloc failed (PSRAM OOM?)");
+            ESP_LOGE("k85_web", "wifi_hotspot: body alloc failed (both PSRAM and internal RAM exhausted)");
             return;
         }
-        build_index_page(body, 8192, ssid, s_web_access_key, dir);
+        build_index_page(body, 8192, ssid, dir);
         send_http_response(conn_fd, "200 OK", "text/html", body);
     }
+}
+
+// Весь цикл accept/handle_connection живёт в отдельной задаче - иначе
+// обработка медленного клиента (до 20с на соединение, см. s_conn_deadline_us)
+// замораживает UI устройства целиком: кнопки A/B, регенерацию ключа - всё,
+// что раньше крутилось в том же цикле, что и сетевой accept().
+static void hotspot_server_task(void *arg) {
+    while (s_hotspot_task_running) {
+        fd_set fds;
+        FD_ZERO(&fds);
+        FD_SET(s_hotspot_listen_fd, &fds);
+        struct timeval tv = {0, 200000};
+        int sel = select(s_hotspot_listen_fd + 1, &fds, nullptr, nullptr, &tv);
+        if (sel > 0 && FD_ISSET(s_hotspot_listen_fd, &fds)) {
+            struct sockaddr_in client_addr;
+            socklen_t client_len = sizeof(client_addr);
+            int conn_fd = accept(s_hotspot_listen_fd, (struct sockaddr *)&client_addr, &client_len);
+            if (conn_fd >= 0) {
+                struct timeval sock_timeout = { .tv_sec = 3, .tv_usec = 0 };
+                setsockopt(conn_fd, SOL_SOCKET, SO_RCVTIMEO, &sock_timeout, sizeof(sock_timeout));
+                setsockopt(conn_fd, SOL_SOCKET, SO_SNDTIMEO, &sock_timeout, sizeof(sock_timeout));
+                handle_connection(conn_fd, s_hotspot_ssid);
+                close(conn_fd);
+            }
+        }
+    }
+    vTaskDelete(nullptr);
 }
 
 static bool choose_ap_password(char *out_password, size_t out_size) {
@@ -743,7 +976,7 @@ static bool choose_ap_password(char *out_password, size_t out_size) {
 }
 
 void k85_wifi_hotspot_regenerate_key(void) {
-    gen_random_string(s_web_access_key, 6 + (int)(esp_random() % 5), true);
+    gen_random_string(s_web_access_key, 6 + (int)(esp_random() % 5), false);
     k85_log("web-fm: access key regenerated");
 }
 
@@ -807,22 +1040,50 @@ void k85_run_wifi_hotspot(void) {
     };
     redraw_hotspot_msg();
 
-    int listen_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (listen_fd < 0) {
+    s_hotspot_listen_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (s_hotspot_listen_fd < 0) {
         k85_show_message("Socket error");
         esp_wifi_set_mode(WIFI_MODE_STA);
         return;
     }
     int opt = 1;
-    setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    setsockopt(s_hotspot_listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
     struct sockaddr_in addr = {};
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
     addr.sin_port = htons(80);
-    bind(listen_fd, (struct sockaddr *)&addr, sizeof(addr));
-    listen(listen_fd, 2);
+    bind(s_hotspot_listen_fd, (struct sockaddr *)&addr, sizeof(addr));
+    listen(s_hotspot_listen_fd, 2);
 
+    snprintf(s_hotspot_ssid, sizeof(s_hotspot_ssid), "%s", ssid);
+
+    // ВАЖНО: стек этой задачи НЕ может быть в PSRAM - handle_connection
+    // внутри читает LittleFS (opendir/fopen), а чтение flash требует
+    // временного отключения кэша, что несовместимо с PSRAM-стеком
+    // текущей задачи (assert esp_task_stack_is_sane_cache_disabled).
+    if (!s_hotspot_task_stack) {
+        s_hotspot_task_stack = (StackType_t *)heap_caps_malloc(K85_HOTSPOT_TASK_STACK_BYTES, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    }
+    bool task_ok = false;
+    if (s_hotspot_task_stack) {
+        s_hotspot_task_running = true;
+        s_hotspot_task_handle = xTaskCreateStaticPinnedToCore(
+            hotspot_server_task, "k85_hotspot_srv", K85_HOTSPOT_TASK_STACK_BYTES, nullptr, 5,
+            s_hotspot_task_stack, &s_hotspot_task_buf, tskNO_AFFINITY);
+        task_ok = (s_hotspot_task_handle != nullptr);
+    }
+    if (!task_ok) {
+        s_hotspot_task_running = false;
+        close(s_hotspot_listen_fd);
+        k85_show_message("Server task failed\n(PSRAM OOM?)\nA+B=back");
+        esp_wifi_set_mode(WIFI_MODE_STA);
+        vTaskDelay(pdMS_TO_TICKS(1500));
+        return;
+    }
+
+    // Основной цикл теперь ТОЛЬКО обрабатывает кнопки - сеть крутится в
+    // отдельной задаче и не может заморозить этот цикл, что бы ни делал клиент.
     bool running = true;
     while (running) {
         k85_input_update();
@@ -835,26 +1096,13 @@ void k85_run_wifi_hotspot(void) {
             k85_wifi_hotspot_regenerate_key();
             redraw_hotspot_msg();
         }
-
-        fd_set fds;
-        FD_ZERO(&fds);
-        FD_SET(listen_fd, &fds);
-        struct timeval tv = {0, 200000};
-        int sel = select(listen_fd + 1, &fds, nullptr, nullptr, &tv);
-        if (sel > 0 && FD_ISSET(listen_fd, &fds)) {
-            struct sockaddr_in client_addr;
-            socklen_t client_len = sizeof(client_addr);
-            int conn_fd = accept(listen_fd, (struct sockaddr *)&client_addr, &client_len);
-            if (conn_fd >= 0) {
-                struct timeval sock_timeout = { .tv_sec = 3, .tv_usec = 0 };
-                setsockopt(conn_fd, SOL_SOCKET, SO_RCVTIMEO, &sock_timeout, sizeof(sock_timeout));
-                setsockopt(conn_fd, SOL_SOCKET, SO_SNDTIMEO, &sock_timeout, sizeof(sock_timeout));
-                handle_connection(conn_fd, ssid);
-                close(conn_fd);
-            }
-        }
+        vTaskDelay(pdMS_TO_TICKS(30));
     }
-    close(listen_fd);
+
+    s_hotspot_task_running = false;
+    vTaskDelay(pdMS_TO_TICKS(300)); // даём задаче заметить флаг и завершиться
+    close(s_hotspot_listen_fd);
+    s_hotspot_listen_fd = -1;
 
     esp_wifi_set_mode(WIFI_MODE_STA);
     k85_log("Hotspot stopped");
@@ -863,4 +1111,3 @@ void k85_run_wifi_hotspot(void) {
 }
 
 #pragma GCC diagnostic pop
-
