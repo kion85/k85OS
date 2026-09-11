@@ -25,11 +25,6 @@
 #include "tools/web_radio.h"
 #include "tools/web_terminal.h"
 #include "tools/level.h"
-#include "tools/ping.h"
-#include "tools/totp_auth.h"
-#include "tools/password_manager.h"
-#include "tools/orientation.h"
-#include "tools/mqtt_tool.h"
 #include "../net/kiwisdr_client.h"
 #include "M5Unified.h"
 #include <cstring>
@@ -38,7 +33,7 @@
 static const char *TOOLS_ITEMS[] = {
     "WiFi Manager", "Color Test", "Bluetooth Scan", "I2C Scanner",
     "GPIO Control", "Files", "Music Player", "Melodies", "Mic Test",
-    "Air Mouse (screen)", "Air Mouse BLE", "WiFi Hotspot", "Calculator", "Terminal", "IR Remote", "SSH Connect", "Task Manager", "LoRa", "Internet SDR", "Web Radio", "Web Terminal", "Level", "Ping", "Authenticator", "Password Manager", "Orientation", "MQTT", "Back"
+    "Air Mouse (screen)", "Air Mouse BLE", "WiFi Hotspot", "Calculator", "Terminal", "IR Remote", "SSH Connect", "Task Manager", "LoRa", "Internet SDR", "Web Radio", "Web Terminal", "Level", "Back"
 };
 #define TOOLS_COUNT (int)(sizeof(TOOLS_ITEMS) / sizeof(TOOLS_ITEMS[0]))
 
@@ -147,28 +142,6 @@ static void draw_tools_icon(int cx, int cy, int r, const char *name, uint32_t co
     } else if (!strcmp(name, "Level")) {
         d.drawCircle(cx, cy, r, col);
         d.fillCircle(cx + r/4, cy - r/5, r/4, col);
-    } else if (!strcmp(name, "Authenticator")) {
-        d.drawRoundRect(cx - r/2, cy - r/2, r, r, r/4, col);
-        d.fillCircle(cx, cy - r/6, r/4, col);
-        d.fillRect(cx - 1, cy, 2, r/3, col);
-    } else if (!strcmp(name, "Password Manager")) {
-        d.drawRoundRect(cx - r/2, cy - r/6, r, r * 2 / 3, r/6, col);
-        d.drawArc(cx, cy - r/3, r/3, r/3 + 2, 180, 360, col);
-        d.fillCircle(cx, cy + r/6, 2, col);
-    } else if (!strcmp(name, "Orientation")) {
-        d.drawRect(cx - r/2, cy - r/2, r, r, col);
-        d.drawRect(cx - r/2 + r/4, cy - r/2 - r/4, r, r, col);
-        d.drawLine(cx - r/2, cy - r/2, cx - r/2 + r/4, cy - r/2 - r/4, col);
-        d.drawLine(cx + r/2, cy - r/2, cx + r/2 + r/4, cy - r/2 - r/4, col);
-    } else if (!strcmp(name, "Ping")) {
-        // Радар-волны, отражающиеся от вертикальной "стены" (хоста).
-        d.drawFastVLine(cx + r/2, cy - r, r * 2, col);
-        d.drawArc(cx - r/4, cy, r/3, r/3 + 2, -60, 60, col);
-        d.drawArc(cx - r/4, cy, r * 2 / 3, r * 2 / 3 + 2, -60, 60, col);
-    } else if (!strcmp(name, "MQTT")) {
-        d.fillCircle(cx, cy, r/3, col);
-        d.drawArc(cx, cy, r/2, r/2 + 2, 200, 340, col);
-        d.drawArc(cx, cy, r, r + 2, 200, 340, col);
     } else if (!strcmp(name, "Back")) {
         d.drawLine(cx + r/2, cy - r/2, cx - r/2, cy, col);
         d.drawLine(cx - r/2, cy, cx + r/2, cy + r/2, col);
@@ -232,17 +205,5 @@ void k85_run_tools_menu(void) {
         else if (idx == 19) k85_run_web_radio();
         else if (idx == 20) k85_run_web_terminal();
         else if (idx == 21) k85_run_level();
-        else if (idx == 22) {
-            if (g_config.wifi_disabled) {
-                k85_show_message("WiFi disabled\n(k85os-menu)");
-                vTaskDelay(pdMS_TO_TICKS(1000));
-            } else {
-                k85_run_ping();
-            }
-        }
-        else if (idx == 23) k85_run_totp_auth();
-        else if (idx == 24) k85_run_password_manager();
-        else if (idx == 25) k85_run_orientation();
-        else if (idx == 26) k85_run_mqtt_tool();
     }
 }

@@ -4,6 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "core/profiles.h"
+#include "core/totp.h"
+#include "core/pwmgr.h"
 
 // ---------- LittleFS ----------
 #define K85_LITTLEFS_PART_LABEL "storage"
@@ -54,6 +56,7 @@ typedef struct {
     bool bg_gradient_enabled;
     int menu_ui_style; // 0=List, 1=Grid, 2=List+Icons
     int bios_ui_style; // 0=List, 1=Grid, 2=List+Icons
+    int sleep_wake_mode; // 0=Button A, 1=IMU, 2=Both
     int lock_shape; // 0=circle 1=square 2=mixed
     uint32_t lock_particle_color; // 0xFFFFFFFF = авто-палитра
     bool grub_enabled;
@@ -85,6 +88,23 @@ typedef struct {
     // Profiles (Home/Work/Eco)
     k85_profile_t profiles[K85_MAX_PROFILES];
     int active_profile_idx;
+
+    // TOTP authenticator accounts
+    k85_totp_entry_t totp_entries[K85_MAX_TOTP_ENTRIES];
+    int totp_entries_count;
+
+    // Password manager
+    char pwmgr_master_verifier[100];
+    k85_pwentry_t pw_entries[K85_MAX_PW_ENTRIES];
+    int pw_entries_count;
+
+    // MQTT
+    char mqtt_broker_uri[128];
+    char mqtt_client_id[32];
+    char mqtt_username[32];
+    char mqtt_password[64];
+
+    int font_idx; // 0=Classic 1=Font2 2=Mono 3=Sans 4=Serif
 
     bool setup_completed; // false у нового устройства - показываем мастер первоначальной настройки
     int cpu_freq_mhz; // 240/160/80, 0 = не задано (используется дефолт 160)

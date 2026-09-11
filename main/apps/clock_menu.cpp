@@ -7,6 +7,7 @@
 #include "config.h"
 #include "rtc_ntp.h"
 #include "wifi.h"
+#include "list_menu.h"
 
 #include "M5Unified.h"
 #include "freertos/FreeRTOS.h"
@@ -16,6 +17,7 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <cmath>
 
 static void wait_ab_exit(void) {
     while (true) {
@@ -305,41 +307,55 @@ static void run_time_settings(void) {
     }
 }
 
+// ---------- Иконки главного суб-меню часов ----------
+static void draw_clock_icon(int cx, int cy, int r, const char *name, uint32_t col, uint32_t bg_col) {
+    auto &d = M5.Display;
+    if (!strcmp(name, "Clock")) {
+        d.drawCircle(cx, cy, r, col);
+        d.drawLine(cx, cy, cx, cy - r + 2, col);
+        d.drawLine(cx, cy, cx + r/2, cy, col);
+    } else if (!strcmp(name, "Timer")) {
+        // Песочные часы: два треугольника вершинами друг к другу.
+        d.fillTriangle(cx - r/2, cy - r, cx + r/2, cy - r, cx, cy, col);
+        d.fillTriangle(cx - r/2, cy + r, cx + r/2, cy + r, cx, cy, col);
+        d.drawFastHLine(cx - r/2, cy - r, r, col);
+        d.drawFastHLine(cx - r/2, cy + r, r, col);
+    } else if (!strcmp(name, "Alarm")) {
+        // Колокольчик.
+        d.fillTriangle(cx - r/2, cy + r/3, cx + r/2, cy + r/3, cx, cy - r, col);
+        d.fillRoundRect(cx - r/2 - 2, cy + r/3 - 2, r + 4, r/3, r/6, col);
+        d.fillCircle(cx, cy + r/3 + r/4, r/6, col);
+    } else if (!strcmp(name, "Time settings")) {
+        // Шестерёнка (как Settings в главном меню).
+        d.fillCircle(cx, cy, r/2, col);
+        for (int a = 0; a < 360; a += 45) {
+            float rad = a * 3.14159f / 180.0f;
+            int x1 = cx + (int)(cosf(rad) * (r/2));
+            int y1 = cy + (int)(sinf(rad) * (r/2));
+            int x2 = cx + (int)(cosf(rad) * r);
+            int y2 = cy + (int)(sinf(rad) * r);
+            d.drawLine(x1, y1, x2, y2, col);
+        }
+    } else if (!strcmp(name, "Back")) {
+        d.drawLine(cx + r/2, cy - r/2, cx - r/2, cy, col);
+        d.drawLine(cx - r/2, cy, cx + r/2, cy + r/2, col);
+        d.drawLine(cx - r/2, cy, cx + r, cy, col);
+    } else {
+        d.fillCircle(cx, cy, r/3, col);
+    }
+}
+
 // ---------- Главное суб-меню часов ----------
 void k85_run_clock_menu(void) {
     static const char *items[] = {"Clock", "Timer", "Alarm", "Time settings", "Back"};
-    int selected = 0;
-    uint32_t bg = k85_get_bg();
+    const int count = (int)(sizeof(items) / sizeof(items[0]));
 
     while (true) {
-        k85_input_update();
-        M5.Display.fillScreen(bg);
-        M5.Display.setTextSize(2);
-        M5.Display.setTextColor(k85_get_fg(), bg);
-        M5.Display.setCursor(6, 6);
-        M5.Display.print("Clock menu");
-
-        for (int i = 0; i < 5; i++) {
-            bool sel = (i == selected);
-            M5.Display.setTextSize(1);
-            M5.Display.setTextColor(sel ? k85_get_accent() : k85_get_fg(), bg);
-            M5.Display.setCursor(6, 36 + i * 16);
-            M5.Display.print(sel ? "> " : "  ");
-            M5.Display.print(items[i]);
-        }
-        M5.Display.setTextColor(0xAAAAAA, bg);
-        M5.Display.setCursor(6, 130);
-        M5.Display.print("A=next B=select A+B=exit");
-
-        if (k85_ab_held(500)) { k85_wait_ab_release(); return; }
-        if (k85_btn_a_pressed()) { selected = (selected + 1) % 5; }
-        if (k85_btn_b_pressed()) {
-            if (selected == 4) return;
-            if (selected == 0) run_clock_face();
-            else if (selected == 1) run_timer();
-            else if (selected == 2) run_alarm();
-            else if (selected == 3) run_time_settings();
-        }
-        vTaskDelay(pdMS_TO_TICKS(30));
+        int idx = k85_run_list_menu("CLOCK", items, count, nullptr, draw_clock_icon);
+        if (idx < 0 || idx == count - 1) return;
+        if (idx == 0) run_clock_face();
+        else if (idx == 1) run_timer();
+        else if (idx == 2) run_alarm();
+        else if (idx == 3) run_time_settings();
     }
 }

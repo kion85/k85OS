@@ -41,7 +41,7 @@ static void wait_ab_exit(void) {
     }
 }
 
-// ---------- ???? HTTP-??????? (??? ?? ???????, ??? ? wifi_hotspot.cpp) ----------
+// ---------- Мини HTTP-сервер (тот же паттерн, что и в wifi_hotspot.cpp) ----------
 static void url_decode(const char *src, char *dst, size_t dst_size) {
     size_t di = 0;
     while (*src && di + 1 < dst_size) {
@@ -369,6 +369,8 @@ static void run_router_log(void) {
                  entries[i].connected ? "+" : "-", entries[i].mac_str);
         names[i] = labels[i];
     }
+    // Список конкретных MAC-адресов из лога - без icon_fn, дефолтная
+    // "буква в кружке" из list_menu.cpp.
     k85_run_list_menu("CONNECTION LOG", names, n, nullptr);
 }
 
@@ -434,10 +436,44 @@ static void run_router_dns_rules(void) {
     }
 }
 
+// Иконки для главного меню Network / Router.
+static void draw_router_icon(int cx, int cy, int r, const char *name, uint32_t col, uint32_t bg_col) {
+    auto &d = M5.Display;
+    if (!strcmp(name, "Start Home Hotspot")) {
+        d.fillRect(cx - r/2, cy + r/2 - 2, 3, 3, col);
+        d.fillRect(cx - r/6, cy + r/4 - 2, 3, r/2, col);
+        d.fillRect(cx + r/6, cy - 2, 3, r - 2, col);
+        d.drawCircle(cx, cy, r, col);
+    } else if (!strcmp(name, "Start Guest Hotspot")) {
+        d.fillRect(cx - r/2, cy + r/2 - 2, 3, 3, col);
+        d.fillRect(cx - r/6, cy + r/4 - 2, 3, r/2, col);
+        d.fillRect(cx + r/6, cy - 2, 3, r - 2, col);
+        d.drawCircle(cx, cy, r, col);
+        d.drawCircle(cx + r/2, cy - r/2, 2, col); // доп. точка - "гость"
+    } else if (!strcmp(name, "Connection Log")) {
+        d.drawFastHLine(cx - r, cy - r/2, r * 2 - r/3, col);
+        d.drawFastHLine(cx - r, cy, r * 2, col);
+        d.drawFastHLine(cx - r, cy + r/2, r * 2 - r/2, col);
+    } else if (!strcmp(name, "Access Control (ACL)")) {
+        d.drawRoundRect(cx - r/2, cy - r/6, r, r * 2 / 3, r/6, col);
+        d.drawArc(cx, cy - r/3, r/3, r/3 + 2, 180, 360, col);
+    } else if (!strcmp(name, "DNS Rules")) {
+        d.drawCircle(cx, cy, r, col);
+        d.drawLine(cx - r, cy, cx + r, cy, col);
+        d.drawLine(cx, cy - r, cx, cy + r, col);
+    } else if (!strcmp(name, "Back")) {
+        d.drawLine(cx + r/2, cy - r/2, cx - r/2, cy, col);
+        d.drawLine(cx - r/2, cy, cx + r/2, cy + r/2, col);
+        d.drawLine(cx - r/2, cy, cx + r, cy, col);
+    } else {
+        d.fillCircle(cx, cy, r/3, col);
+    }
+}
+
 void k85_run_router_menu(void) {
     static const char *items[] = {"Start Home Hotspot", "Start Guest Hotspot", "Connection Log", "Access Control (ACL)", "DNS Rules", "Back"};
     while (true) {
-        int idx = k85_run_list_menu("NETWORK / ROUTER", items, 6, nullptr);
+        int idx = k85_run_list_menu("NETWORK / ROUTER", items, 6, nullptr, draw_router_icon);
         if (idx < 0 || idx == 5) break;
         if (idx == 0) run_router_start(false);
         else if (idx == 1) run_router_start(true);
@@ -448,7 +484,3 @@ void k85_run_router_menu(void) {
 }
 
 #pragma GCC diagnostic pop
-
-
-
-

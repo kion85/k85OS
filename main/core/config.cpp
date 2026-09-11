@@ -74,6 +74,7 @@ void k85_config_defaults(k85_config_t *cfg) {
     cfg->bg_gradient_enabled = false;
     cfg->menu_ui_style = 0;
     cfg->bios_ui_style = 0;
+    cfg->sleep_wake_mode = 0;
     cfg->lock_shape = 0;
     cfg->lock_particle_color = 0xFFFFFFFF;
     cfg->grub_enabled = true;
@@ -91,6 +92,14 @@ void k85_config_defaults(k85_config_t *cfg) {
 
     k85_profiles_defaults(cfg->profiles);
     cfg->active_profile_idx = 0;
+    cfg->totp_entries_count = 0;
+    cfg->pwmgr_master_verifier[0] = 0;
+    cfg->pw_entries_count = 0;
+    cfg->mqtt_broker_uri[0] = 0;
+    cfg->mqtt_client_id[0] = 0;
+    cfg->mqtt_username[0] = 0;
+    cfg->mqtt_password[0] = 0;
+    cfg->font_idx = 0;
     // high_scores, step_count, step_record, step_date вЂ” СѓР¶Рµ 0/""
 }
 
@@ -266,6 +275,7 @@ static cJSON *cfg_to_json(const k85_config_t *c) {
     cJSON_AddBoolToObject(root, "bg_gradient_enabled", c->bg_gradient_enabled);
     cJSON_AddNumberToObject(root, "menu_ui_style", c->menu_ui_style);
     cJSON_AddNumberToObject(root, "bios_ui_style", c->bios_ui_style);
+    cJSON_AddNumberToObject(root, "sleep_wake_mode", c->sleep_wake_mode);
     cJSON_AddNumberToObject(root, "lock_shape", c->lock_shape);
     cJSON_AddNumberToObject(root, "lock_particle_color", (double)c->lock_particle_color);
     cJSON_AddBoolToObject(root, "grub_enabled", c->grub_enabled);
@@ -322,6 +332,37 @@ static cJSON *cfg_to_json(const k85_config_t *c) {
     cJSON_AddItemToObject(root, "profiles", profs);
     cJSON_AddNumberToObject(root, "active_profile_idx", c->active_profile_idx);
 
+    cJSON *totps = cJSON_CreateArray();
+    for (int i = 0; i < c->totp_entries_count; i++) {
+        cJSON *tel = cJSON_CreateObject();
+        cJSON_AddStringToObject(tel, "name", c->totp_entries[i].name);
+        cJSON_AddStringToObject(tel, "secret_base32", c->totp_entries[i].secret_base32);
+        cJSON_AddItemToArray(totps, tel);
+    }
+    cJSON_AddItemToObject(root, "totp_entries", totps);
+
+    cJSON_AddStringToObject(root, "pwmgr_master_verifier", c->pwmgr_master_verifier);
+    cJSON *pws = cJSON_CreateArray();
+    for (int i = 0; i < c->pw_entries_count; i++) {
+        cJSON *pel = cJSON_CreateObject();
+        cJSON_AddStringToObject(pel, "name", c->pw_entries[i].name);
+        cJSON_AddStringToObject(pel, "username", c->pw_entries[i].username);
+        char iv_hex[40]; for (int b = 0; b < 16; b++) snprintf(iv_hex + b*2, 3, "%02x", c->pw_entries[i].iv[b]);
+        cJSON_AddStringToObject(pel, "iv", iv_hex);
+        char ct_hex[200]; for (int b = 0; b < c->pw_entries[i].ciphertext_len; b++) snprintf(ct_hex + b*2, 3, "%02x", c->pw_entries[i].ciphertext[b]);
+        ct_hex[c->pw_entries[i].ciphertext_len*2] = 0;
+        cJSON_AddStringToObject(pel, "ciphertext", ct_hex);
+        cJSON_AddNumberToObject(pel, "ciphertext_len", c->pw_entries[i].ciphertext_len);
+        cJSON_AddItemToArray(pws, pel);
+    }
+    cJSON_AddItemToObject(root, "pw_entries", pws);
+
+    cJSON_AddStringToObject(root, "mqtt_broker_uri", c->mqtt_broker_uri);
+    cJSON_AddStringToObject(root, "mqtt_client_id", c->mqtt_client_id);
+    cJSON_AddStringToObject(root, "mqtt_username", c->mqtt_username);
+    cJSON_AddStringToObject(root, "mqtt_password", c->mqtt_password);
+    cJSON_AddNumberToObject(root, "font_idx", c->font_idx);
+
     cJSON_AddBoolToObject(root, "ssh_enabled", c->ssh_enabled);
     cJSON_AddStringToObject(root, "ssh_username", c->ssh_username);
     cJSON_AddStringToObject(root, "ssh_password_hash", c->ssh_password_hash);
@@ -362,6 +403,7 @@ static void cfg_from_json(cJSON *root, k85_config_t *out) {
     { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "bg_gradient_enabled"); if (_x) out->bg_gradient_enabled = cJSON_IsTrue(_x); }
     { cJSON *_y = cJSON_GetObjectItemCaseSensitive(root, "menu_ui_style"); if (_y) out->menu_ui_style = _y->valueint; }
     { cJSON *_z = cJSON_GetObjectItemCaseSensitive(root, "bios_ui_style"); if (_z) out->bios_ui_style = _z->valueint; }
+    { cJSON *_sw = cJSON_GetObjectItemCaseSensitive(root, "sleep_wake_mode"); if (_sw) out->sleep_wake_mode = _sw->valueint; }
     { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "lock_shape"); if (_x && cJSON_IsNumber(_x)) out->lock_shape = _x->valueint; }
     { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "lock_particle_color"); if (_x && cJSON_IsNumber(_x)) out->lock_particle_color = (uint32_t)_x->valuedouble; }
     { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "grub_enabled"); if (_x) out->grub_enabled = cJSON_IsTrue(_x); }
@@ -435,6 +477,66 @@ static void cfg_from_json(cJSON *root, k85_config_t *out) {
         }
     }
     { cJSON *x = cJSON_GetObjectItemCaseSensitive(root, "active_profile_idx"); if (x && cJSON_IsNumber(x)) out->active_profile_idx = x->valueint; }
+    {
+        cJSON *totps = cJSON_GetObjectItemCaseSensitive(root, "totp_entries");
+        if (totps && cJSON_IsArray(totps)) {
+            int n = cJSON_GetArraySize(totps);
+            if (n > K85_MAX_TOTP_ENTRIES) n = K85_MAX_TOTP_ENTRIES;
+            for (int i = 0; i < n; i++) {
+                cJSON *tel = cJSON_GetArrayItem(totps, i);
+                if (!tel || !cJSON_IsObject(tel)) continue;
+                cJSON *nm = cJSON_GetObjectItemCaseSensitive(tel, "name");
+                cJSON *sc = cJSON_GetObjectItemCaseSensitive(tel, "secret_base32");
+                if (nm && cJSON_IsString(nm)) snprintf(out->totp_entries[i].name, sizeof(out->totp_entries[i].name), "%s", nm->valuestring);
+                if (sc && cJSON_IsString(sc)) snprintf(out->totp_entries[i].secret_base32, sizeof(out->totp_entries[i].secret_base32), "%s", sc->valuestring);
+            }
+            out->totp_entries_count = n;
+    {
+        cJSON *_pw = cJSON_GetObjectItemCaseSensitive(root, "pwmgr_master_verifier");
+        if (_pw && cJSON_IsString(_pw)) snprintf(out->pwmgr_master_verifier, sizeof(out->pwmgr_master_verifier), "%s", _pw->valuestring);
+    }
+    {
+        cJSON *pws = cJSON_GetObjectItemCaseSensitive(root, "pw_entries");
+        if (pws && cJSON_IsArray(pws)) {
+            int n = cJSON_GetArraySize(pws);
+            if (n > K85_MAX_PW_ENTRIES) n = K85_MAX_PW_ENTRIES;
+            for (int i = 0; i < n; i++) {
+                cJSON *pel = cJSON_GetArrayItem(pws, i);
+                if (!pel || !cJSON_IsObject(pel)) continue;
+                cJSON *nm = cJSON_GetObjectItemCaseSensitive(pel, "name");
+                cJSON *un = cJSON_GetObjectItemCaseSensitive(pel, "username");
+                cJSON *ivh = cJSON_GetObjectItemCaseSensitive(pel, "iv");
+                cJSON *cth = cJSON_GetObjectItemCaseSensitive(pel, "ciphertext");
+                cJSON *ctl = cJSON_GetObjectItemCaseSensitive(pel, "ciphertext_len");
+                if (nm && cJSON_IsString(nm)) snprintf(out->pw_entries[i].name, sizeof(out->pw_entries[i].name), "%s", nm->valuestring);
+                if (un && cJSON_IsString(un)) snprintf(out->pw_entries[i].username, sizeof(out->pw_entries[i].username), "%s", un->valuestring);
+                if (ivh && cJSON_IsString(ivh)) {
+                    const char *h = ivh->valuestring;
+                    for (int b = 0; b < 16 && h[b*2] && h[b*2+1]; b++) {
+                        char byte_str[3] = { h[b*2], h[b*2+1], 0 };
+                        out->pw_entries[i].iv[b] = (uint8_t)strtoul(byte_str, nullptr, 16);
+                    }
+                }
+                if (cth && cJSON_IsString(cth)) {
+                    const char *h = cth->valuestring;
+                    int hl = (int)strlen(h);
+                    for (int b = 0; b < hl / 2 && b < 80; b++) {
+                        char byte_str[3] = { h[b*2], h[b*2+1], 0 };
+                        out->pw_entries[i].ciphertext[b] = (uint8_t)strtoul(byte_str, nullptr, 16);
+                    }
+                }
+                if (ctl && cJSON_IsNumber(ctl)) out->pw_entries[i].ciphertext_len = ctl->valueint;
+            }
+            out->pw_entries_count = n;
+    { cJSON *_m = cJSON_GetObjectItemCaseSensitive(root, "mqtt_broker_uri"); if (_m && cJSON_IsString(_m)) snprintf(out->mqtt_broker_uri, sizeof(out->mqtt_broker_uri), "%s", _m->valuestring); }
+    { cJSON *_m = cJSON_GetObjectItemCaseSensitive(root, "mqtt_client_id"); if (_m && cJSON_IsString(_m)) snprintf(out->mqtt_client_id, sizeof(out->mqtt_client_id), "%s", _m->valuestring); }
+    { cJSON *_m = cJSON_GetObjectItemCaseSensitive(root, "mqtt_username"); if (_m && cJSON_IsString(_m)) snprintf(out->mqtt_username, sizeof(out->mqtt_username), "%s", _m->valuestring); }
+    { cJSON *_m = cJSON_GetObjectItemCaseSensitive(root, "mqtt_password"); if (_m && cJSON_IsString(_m)) snprintf(out->mqtt_password, sizeof(out->mqtt_password), "%s", _m->valuestring); }
+    { cJSON *_f = cJSON_GetObjectItemCaseSensitive(root, "font_idx"); if (_f) out->font_idx = _f->valueint; }
+        }
+    }
+        }
+    }
 
     { cJSON *x = cJSON_GetObjectItemCaseSensitive(root, "ssh_enabled"); if (x) out->ssh_enabled = cJSON_IsTrue(x); }
     { cJSON *x = cJSON_GetObjectItemCaseSensitive(root, "ssh_username"); if (x && cJSON_IsString(x)) set_str(out->ssh_username, sizeof(out->ssh_username), x->valuestring); }

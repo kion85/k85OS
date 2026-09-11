@@ -27,6 +27,7 @@ bool k85_wifi_is_connected(void);
 const char *k85_wifi_get_ip_str(void);
 // Возвращает IP STA-интерфейса в сетевом порядке байт (0 если не подключены) - для bind() на конкретный адрес.
 uint32_t k85_wifi_get_ip_addr(void);
+const char *k85_wifi_get_mdns_hostname(void);
 
 // RSSI текущего подключения, 0 если не подключены
 int k85_wifi_get_rssi(void);

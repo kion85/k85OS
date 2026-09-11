@@ -30,6 +30,7 @@ using namespace k85;
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_timer.h"
+#include "core/fonts.h"
 
 #define K85_QS_HOLD_MS 800
 static bool s_b_was_down = false;
@@ -64,6 +65,7 @@ extern "C" void app_main(void) {
         return;
     }
     k85_config_load();
+    k85_apply_font(g_config.font_idx);
     k85_post_set_enabled(g_config.post_beep_enabled);
     PostReport post_report;
     k85_post_report_check(post_report, PostCode::LITTLEFS_MOUNT_FAIL, true);

@@ -1,4 +1,4 @@
-﻿#include "system_info.h"
+#include "system_info.h"
 #include "theme.h"
 #include "battery.h"
 #include "power.h"
@@ -11,6 +11,7 @@
 
 #include "M5Unified.h"
 #include "esp_heap_caps.h"
+#include "esp_system.h"
 #include "driver/temperature_sensor.h"
 
 #include "freertos/FreeRTOS.h"
@@ -19,7 +20,25 @@
 #include <cstdio>
 
 #define K85_FW_NAME "k85OS"
-#define K85_FW_VERSION "v5.8"
+#define K85_FW_VERSION "v6.6"
+
+// Причина последнего сброса/загрузки - ESP-IDF хранит её в RTC-памяти,
+// переживает даже панику/краш, отдельное хранилище не требуется.
+static const char *reset_reason_str(void) {
+    switch (esp_reset_reason()) {
+        case ESP_RST_POWERON:   return "Power-on";
+        case ESP_RST_EXT:       return "External pin";
+        case ESP_RST_SW:        return "Software (reboot)";
+        case ESP_RST_PANIC:     return "Panic/Crash";
+        case ESP_RST_INT_WDT:   return "Interrupt WDT";
+        case ESP_RST_TASK_WDT:  return "Task WDT";
+        case ESP_RST_WDT:       return "Other WDT";
+        case ESP_RST_DEEPSLEEP: return "Deep sleep wake";
+        case ESP_RST_BROWNOUT:  return "Brownout";
+        case ESP_RST_SDIO:      return "SDIO";
+        default:                return "Unknown";
+    }
+}
 
 static temperature_sensor_handle_t s_temp_handle = nullptr;
 static bool s_temp_ready = false;
@@ -124,6 +143,9 @@ void k85_run_system_info(void) {
             M5.Display.setCursor(10, y); M5.Display.print(line); y += 12;
 
             snprintf(line, sizeof(line), "Uptime: %s", k85_get_uptime_str());
+            M5.Display.setCursor(10, y); M5.Display.print(line); y += 12;
+
+            snprintf(line, sizeof(line), "Last reset: %s", reset_reason_str());
             M5.Display.setCursor(10, y); M5.Display.print(line); y += 12;
         }
 

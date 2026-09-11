@@ -1,7 +1,6 @@
 #include "wifi_hotspot.h"
 #include "wifi.h"
 #include "common.h"
-#include "qr_wifi.h"
 #include "power.h"
 #include "input.h"
 #include "log.h"
@@ -97,6 +96,9 @@ static bool sanitize_relpath(const char *name) {
     return true;
 }
 
+// Тот же чёрный список, что и в SSH-shell (shell_commands.cpp) - SSH-ключ
+// и файл конфига (WiFi-пароли, хеши) не должны отдаваться через веб-морду
+// ни при каких обстоятельствах, независимо от того, знает ли клиент access key.
 static bool is_blocked_download_path(const char *path) {
     static const char *blocked[] = { "k85_ssh_host_key", "k85os_config.json", "k85_ssh_" };
     for (size_t i = 0; i < sizeof(blocked) / sizeof(blocked[0]); i++) {
@@ -136,6 +138,7 @@ static bool get_query_param(const char *query, const char *key, char *out, size_
     return true;
 }
 
+// Ищет "Cookie: ... k85key=VALUE ..." в блоке сырых заголовков запроса.
 static bool get_cookie_value(const char *headers_block, size_t headers_len, const char *name, char *out, size_t out_size) {
     const char *cookie_hdr = nullptr;
     for (size_t i = 0; i + 7 < headers_len; i++) {
@@ -156,6 +159,10 @@ static bool get_cookie_value(const char *headers_block, size_t headers_len, cons
     return true;
 }
 
+// Проверяет доступ: сначала по cookie (обычная навигация после логина -
+// ключ никогда не виден в адресной строке, все внутренние ссылки его
+// больше не содержат вообще), с фоллбэком на query-параметр ?key= только
+// для случая, если кто-то вручную ввёл/сохранил старую ссылку.
 static bool check_access_key(const char *headers_block, size_t headers_len, const char *query) {
     int64_t now = esp_timer_get_time();
     if (now < s_lockout_until_us) return false;
@@ -273,15 +280,11 @@ static bool handle_upload_body(int conn_fd, const char *header,
     long delim_len = (long)strlen(delim);
     if (delim_len <= 2) return false;
 
-    static char *buf = nullptr;
-    static size_t buf_cap = 4096;
-    if (!buf) buf = (char *)heap_caps_malloc(buf_cap, MALLOC_CAP_SPIRAM);
-    if (!buf) buf = (char *)heap_caps_malloc(buf_cap, MALLOC_CAP_INTERNAL); // fallback - PSRAM может быть фрагментирована
-    if (!buf) { k85_log("upload: buf alloc failed"); return false; }
+    static char buf[4096];
     long have = 0;
     if (initial_body_len > 0) {
         long n = initial_body_len;
-        if (n > (long)buf_cap) n = (long)buf_cap;
+        if (n > (long)sizeof(buf)) n = sizeof(buf);
         memcpy(buf, initial_body, n);
         have = n;
     }
@@ -289,8 +292,8 @@ static bool handle_upload_body(int conn_fd, const char *header,
     long part_headers_end = find_bytes(buf, have, "\r\n\r\n", 4);
     while (part_headers_end < 0) {
         if (esp_timer_get_time() > s_conn_deadline_us) return false;
-        if (have >= (long)buf_cap - 1) return false;
-        int r = recv(conn_fd, buf + have, buf_cap - have, 0);
+        if (have >= (long)sizeof(buf) - 1) return false;
+        int r = recv(conn_fd, buf + have, sizeof(buf) - have, 0);
         if (r <= 0) return false;
         have += r;
         part_headers_end = find_bytes(buf, have, "\r\n\r\n", 4);
@@ -348,8 +351,8 @@ static bool handle_upload_body(int conn_fd, const char *header,
         }
         if (total_written > K85_MAX_UPLOAD_BYTES) { k85_log("upload: exceeded max size, aborting"); ok = false; break; }
         if (esp_timer_get_time() > s_conn_deadline_us) break;
-        if (have >= (long)buf_cap) break;
-        int r = recv(conn_fd, buf + have, buf_cap - have, 0);
+        if (have >= (long)sizeof(buf)) break;
+        int r = recv(conn_fd, buf + have, sizeof(buf) - have, 0);
         if (r <= 0) break;
         have += r;
     }
@@ -364,6 +367,11 @@ static bool handle_upload_body(int conn_fd, const char *header,
     return true;
 }
 
+// Форма теперь содержит ДВА поля: file (бинарник) и sig (hex-подпись).
+// Браузеры отправляют части в порядке полей формы - у нас file идёт первым,
+// sig вторым. Сначала стримим file до первой границы (как раньше), затем
+// доразбираем оставшийся буфер (и при нужде дочитываем ещё) чтобы найти
+// значение поля sig между его заголовками и следующей границей.
 static bool handle_firmware_upload_body(int conn_fd, const char *header,
                                          const char *initial_body, long initial_body_len) {
     const char *b = strstr(header, "boundary=");
@@ -381,15 +389,11 @@ static bool handle_firmware_upload_body(int conn_fd, const char *header,
     long delim_len = (long)strlen(delim);
     if (delim_len <= 2) return false;
 
-    static char *buf = nullptr;
-    static size_t buf_cap = 4096;
-    if (!buf) buf = (char *)heap_caps_malloc(buf_cap, MALLOC_CAP_SPIRAM);
-    if (!buf) buf = (char *)heap_caps_malloc(buf_cap, MALLOC_CAP_INTERNAL); // fallback - PSRAM может быть фрагментирована
-    if (!buf) { k85_log("firmware upload: buf alloc failed"); return false; }
+    static char buf[4096];
     long have = 0;
     if (initial_body_len > 0) {
         long n = initial_body_len;
-        if (n > (long)buf_cap) n = (long)buf_cap;
+        if (n > (long)sizeof(buf)) n = sizeof(buf);
         memcpy(buf, initial_body, n);
         have = n;
     }
@@ -397,8 +401,8 @@ static bool handle_firmware_upload_body(int conn_fd, const char *header,
     long part_headers_end = find_bytes(buf, have, "\r\n\r\n", 4);
     while (part_headers_end < 0) {
         if (esp_timer_get_time() > s_conn_deadline_us) return false;
-        if (have >= (long)buf_cap - 1) return false;
-        int r = recv(conn_fd, buf + have, buf_cap - have, 0);
+        if (have >= (long)sizeof(buf) - 1) return false;
+        int r = recv(conn_fd, buf + have, sizeof(buf) - have, 0);
         if (r <= 0) return false;
         have += r;
         part_headers_end = find_bytes(buf, have, "\r\n\r\n", 4);
@@ -434,8 +438,8 @@ static bool handle_firmware_upload_body(int conn_fd, const char *header,
             have -= safe_len;
         }
         if (esp_timer_get_time() > s_conn_deadline_us) break;
-        if (have >= (long)buf_cap) break;
-        int r = recv(conn_fd, buf + have, buf_cap - have, 0);
+        if (have >= (long)sizeof(buf)) break;
+        int r = recv(conn_fd, buf + have, sizeof(buf) - have, 0);
         if (r <= 0) break;
         have += r;
     }
@@ -446,6 +450,9 @@ static bool handle_firmware_upload_body(int conn_fd, const char *header,
         return false;
     }
 
+    // Разбираем второй multipart-блок (поле sig): оставшиеся данные после
+    // границы файла - от него до конца заголовков этой части, потом до
+    // следующей границы - это и есть значение подписи.
     if (after_file_pos > 0 && after_file_pos <= have) {
         long remaining = have - after_file_pos;
         if (remaining > 0) memmove(buf, buf + after_file_pos, remaining);
@@ -457,8 +464,8 @@ static bool handle_firmware_upload_body(int conn_fd, const char *header,
     long sig_headers_end = find_bytes(buf, have, "\r\n\r\n", 4);
     while (sig_headers_end < 0) {
         if (esp_timer_get_time() > s_conn_deadline_us) break;
-        if (have >= (long)buf_cap - 1) break;
-        int r = recv(conn_fd, buf + have, buf_cap - have, 0);
+        if (have >= (long)sizeof(buf) - 1) break;
+        int r = recv(conn_fd, buf + have, sizeof(buf) - have, 0);
         if (r <= 0) break;
         have += r;
         sig_headers_end = find_bytes(buf, have, "\r\n\r\n", 4);
@@ -472,14 +479,14 @@ static bool handle_firmware_upload_body(int conn_fd, const char *header,
         have = sig_pending;
 
         long sig_end = find_bytes(buf, have, delim, delim_len);
-        while (sig_end < 0 && have < (long)buf_cap - 1) {
+        while (sig_end < 0 && have < (long)sizeof(buf) - 1) {
             if (esp_timer_get_time() > s_conn_deadline_us) break;
-            int r = recv(conn_fd, buf + have, buf_cap - have, 0);
+            int r = recv(conn_fd, buf + have, sizeof(buf) - have, 0);
             if (r <= 0) break;
             have += r;
             sig_end = find_bytes(buf, have, delim, delim_len);
         }
-        if (sig_end < 0) sig_end = have;
+        if (sig_end < 0) sig_end = have; // на крайний случай - что есть, то и берём
 
         long sig_len = sig_end;
         if (sig_len >= 2 && buf[sig_len - 2] == '\r' && buf[sig_len - 1] == '\n') sig_len -= 2;
@@ -542,6 +549,8 @@ static void get_parent_dir(const char *dir, char *out, size_t out_size) {
     snprintf(out, out_size, "%s", tmp);
 }
 
+// Ключ больше НЕ передаётся параметром - все ссылки строятся без &key=,
+// авторизация полностью на cookie k85key (см. check_access_key выше).
 static void build_index_page(char *out, size_t out_size, const char *ssid, const char *dir) {
     int64_t uptime_s = esp_timer_get_time() / 1000000;
 
@@ -742,17 +751,13 @@ static void build_firmware_page(char *out, size_t out_size) {
 
 static void handle_connection(int conn_fd, const char *ssid) {
     s_conn_deadline_us = esp_timer_get_time() + 20LL * 1000000;
-    static char *req_buf = nullptr;
-    static size_t req_buf_cap = 4096;
-    if (!req_buf) req_buf = (char *)heap_caps_malloc(req_buf_cap, MALLOC_CAP_SPIRAM);
-    if (!req_buf) req_buf = (char *)heap_caps_malloc(req_buf_cap, MALLOC_CAP_INTERNAL); // fallback - PSRAM может быть фрагментирована
-    if (!req_buf) { k85_log("web-fm: req_buf alloc failed"); return; }
+    static char req_buf[4096];
     long req_len = 0;
     long headers_end = -1;
 
-    while (headers_end < 0 && req_len < (long)req_buf_cap - 1) {
+    while (headers_end < 0 && req_len < (long)sizeof(req_buf) - 1) {
         if (esp_timer_get_time() > s_conn_deadline_us) return;
-        int r = recv(conn_fd, req_buf + req_len, req_buf_cap - 1 - req_len, 0);
+        int r = recv(conn_fd, req_buf + req_len, sizeof(req_buf) - 1 - req_len, 0);
         if (r <= 0) break;
         req_len += r;
         req_buf[req_len] = 0;
@@ -822,7 +827,7 @@ static void handle_connection(int conn_fd, const char *ssid) {
     if (strcmp(path, "/firmware") == 0) {
         static char *body = nullptr;
         if (!body) body = (char *)heap_caps_malloc(6144, MALLOC_CAP_SPIRAM);
-        if (!body) body = (char *)heap_caps_malloc(6144, MALLOC_CAP_INTERNAL);
+        if (!body) body = (char *)heap_caps_malloc(6144, MALLOC_CAP_INTERNAL); // fallback - PSRAM может быть фрагментирована
         if (!body) { send_http_response(conn_fd, "500 Internal Server Error", "text/html", k85_generic_fail_html); return; }
         build_firmware_page(body, 6144);
         send_http_response(conn_fd, "200 OK", "text/html", body);
@@ -911,7 +916,7 @@ static void handle_connection(int conn_fd, const char *ssid) {
     } else {
         static char *body = nullptr;
         if (!body) body = (char *)heap_caps_malloc(8192, MALLOC_CAP_SPIRAM);
-        if (!body) body = (char *)heap_caps_malloc(8192, MALLOC_CAP_INTERNAL);
+        if (!body) body = (char *)heap_caps_malloc(8192, MALLOC_CAP_INTERNAL); // fallback - PSRAM может быть фрагментирована
         if (!body) {
             ESP_LOGE("k85_web", "wifi_hotspot: body alloc failed (both PSRAM and internal RAM exhausted)");
             return;
@@ -921,6 +926,10 @@ static void handle_connection(int conn_fd, const char *ssid) {
     }
 }
 
+// Весь цикл accept/handle_connection живёт в отдельной задаче - иначе
+// обработка медленного клиента (до 20с на соединение, см. s_conn_deadline_us)
+// замораживает UI устройства целиком: кнопки A/B, регенерацию ключа - всё,
+// что раньше крутилось в том же цикле, что и сетевой accept().
 static void hotspot_server_task(void *arg) {
     while (s_hotspot_task_running) {
         fd_set fds;
@@ -1005,19 +1014,7 @@ void k85_run_wifi_hotspot(void) {
 
     esp_wifi_set_mode(WIFI_MODE_AP);
     esp_wifi_set_config(WIFI_IF_AP, &ap_config);
-
-    k85_log("Hotspot PRE-start: internal_free=%u spiram_free=%u largest_internal=%u",
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
-             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
-
     esp_err_t start_err = esp_wifi_start();
-
-    k85_log("Hotspot POST-start: internal_free=%u spiram_free=%u largest_internal=%u",
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
-             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
-
     if (start_err != ESP_OK && start_err != ESP_ERR_WIFI_STATE) {
         k85_log("Hotspot start failed: %d", (int)start_err);
         k85_show_message("Hotspot failed\nA+B=back");
@@ -1033,10 +1030,10 @@ void k85_run_wifi_hotspot(void) {
     char msg[180];
     auto redraw_hotspot_msg = [&]() {
         if (g_config.ap_open) {
-            snprintf(msg, sizeof(msg), "AP: %s (open)\nCh: %d\nIP: %s\nWeb key: %s\nA=QR  B=new key  A+B=stop",
+            snprintf(msg, sizeof(msg), "AP: %s (open)\nCh: %d\nIP: %s\nWeb key: %s\nB=new key  A+B=stop",
                      ssid, channel, ip_str, s_web_access_key);
         } else {
-            snprintf(msg, sizeof(msg), "AP: %s\nAP pass: %s\nCh: %d\nIP: %s\nWeb key: %s\nA=QR  B=new key  A+B=stop",
+            snprintf(msg, sizeof(msg), "AP: %s\nAP pass: %s\nCh: %d\nIP: %s\nWeb key: %s\nB=new key  A+B=stop",
                      ssid, password, channel, ip_str, s_web_access_key);
         }
         k85_show_message(msg);
@@ -1061,6 +1058,10 @@ void k85_run_wifi_hotspot(void) {
 
     snprintf(s_hotspot_ssid, sizeof(s_hotspot_ssid), "%s", ssid);
 
+    // ВАЖНО: стек этой задачи НЕ может быть в PSRAM - handle_connection
+    // внутри читает LittleFS (opendir/fopen), а чтение flash требует
+    // временного отключения кэша, что несовместимо с PSRAM-стеком
+    // текущей задачи (assert esp_task_stack_is_sane_cache_disabled).
     if (!s_hotspot_task_stack) {
         s_hotspot_task_stack = (StackType_t *)heap_caps_malloc(K85_HOTSPOT_TASK_STACK_BYTES, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     }
@@ -1081,6 +1082,8 @@ void k85_run_wifi_hotspot(void) {
         return;
     }
 
+    // Основной цикл теперь ТОЛЬКО обрабатывает кнопки - сеть крутится в
+    // отдельной задаче и не может заморозить этот цикл, что бы ни делал клиент.
     bool running = true;
     while (running) {
         k85_input_update();
@@ -1093,15 +1096,11 @@ void k85_run_wifi_hotspot(void) {
             k85_wifi_hotspot_regenerate_key();
             redraw_hotspot_msg();
         }
-        if (k85_btn_a_pressed()) {
-            k85_show_wifi_qr(ssid, g_config.ap_open ? nullptr : password, g_config.ap_open);
-            redraw_hotspot_msg(); // после закрытия QR (A+B) возвращаем статус-экран
-        }
         vTaskDelay(pdMS_TO_TICKS(30));
     }
 
     s_hotspot_task_running = false;
-    vTaskDelay(pdMS_TO_TICKS(300));
+    vTaskDelay(pdMS_TO_TICKS(300)); // даём задаче заметить флаг и завершиться
     close(s_hotspot_listen_fd);
     s_hotspot_listen_fd = -1;
 
