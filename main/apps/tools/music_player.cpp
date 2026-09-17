@@ -10,6 +10,7 @@
 #include "mp3_decode.h"
 
 static void play_mp3_file(const char *path);
+static void play_wav_file(const char *path);
 
 #include "M5Unified.h"
 #include "esp_timer.h"
@@ -470,6 +471,20 @@ void k85_run_music_player(void) {
                 play_wav_file(chosen_path);
             }
         }
+    }
+}
+
+// Публичная обёртка для внешних вызывающих (например, Files -> Run):
+// проигрывает один конкретный файл, определяя декодер по расширению - без
+// похода в общий браузер "MUSIC SOURCE".
+void k85_play_audio_file(const char *path) {
+    if (entry_is_mp3(path)) {
+        play_mp3_file(path);
+    } else if (entry_is_wav(path)) {
+        play_wav_file(path);
+    } else {
+        k85_show_message("Not a playable\naudio file\nA+B=back");
+        vTaskDelay(pdMS_TO_TICKS(1500));
     }
 }
 

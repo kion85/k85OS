@@ -1,4 +1,4 @@
-#include "system_info.h"
+﻿#include "system_info.h"
 #include "theme.h"
 #include "battery.h"
 #include "power.h"
@@ -20,7 +20,7 @@
 #include <cstdio>
 
 #define K85_FW_NAME "k85OS"
-#define K85_FW_VERSION "v6.6"
+#define K85_FW_VERSION "v7.0"
 
 // Причина последнего сброса/загрузки - ESP-IDF хранит её в RTC-памяти,
 // переживает даже панику/краш, отдельное хранилище не требуется.

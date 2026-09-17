@@ -371,13 +371,27 @@ static void draw_menu_grid(void) {
 
     k85_status_bar_draw();
 }
-void k85_menu_next(void) {
+#define K85_MENU_JUMP_STEPS 3
+
+static void menu_move(int delta) {
     const char *items[K85_MENU_ITEM_COUNT];
     int count = get_filtered_menu(items, K85_MENU_ITEM_COUNT);
     if (count > 0) {
-        s_selected = (s_selected + 1) % count;
+        s_selected = ((s_selected + delta) % count + count) % count;
     }
     k85_menu_draw();
+}
+
+void k85_menu_next(void) {
+    menu_move(1);
+}
+
+void k85_menu_prev(void) {
+    menu_move(-1);
+}
+
+void k85_menu_jump_forward(void) {
+    menu_move(K85_MENU_JUMP_STEPS);
 }
 
 static bool play_tone_blocking(uint32_t freq, uint32_t dur_ms) {

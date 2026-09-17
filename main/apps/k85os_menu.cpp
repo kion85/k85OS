@@ -9,6 +9,7 @@
 #include "list_menu.h"
 #include "../core/post_beep.h"
 #include "../core/bios_theme.h"
+#include "../core/boot_screen.h"
 #include "../core/version.h"
 #include "../net/app_repo.h"
 
@@ -30,7 +31,7 @@
 
 using namespace k85;
 
-#define K85_BIOS_ITEM_COUNT 21
+#define K85_BIOS_ITEM_COUNT 22
 #define K85_BIOS_VISIBLE_ROWS 6
 
 static const char *k85_bios_labels[K85_BIOS_ITEM_COUNT] = {
@@ -40,7 +41,7 @@ static const char *k85_bios_labels[K85_BIOS_ITEM_COUNT] = {
     "Update UEFI theme", "Customization",
     "POST beep", "POST beep info", "Mute all sound", "GRUB menu", "Boot options",
     "Wipe WiFi networks", "Reset config", "Factory reset",
-    "Reboot",
+    "Boot loader style", "Reboot",
 };
 
 static int s_selected = 0;
@@ -73,6 +74,12 @@ static void bios_value_str(char *out, size_t out_size, int idx) {
             int c = g_config.default_boot_choice;
             if (c < 0 || c > 2) c = 0;
             snprintf(out, out_size, "%s", names[c]);
+            break;
+        }
+        case 20: {
+            int s = g_config.boot_loader_style;
+            if (s < 0 || s >= K85_BOOT_LOADER_STYLE_COUNT) s = 0;
+            snprintf(out, out_size, "%s", k85_boot_loader_style_names[s]);
             break;
         }
         default: out[0] = 0;
@@ -532,7 +539,12 @@ static void draw_bios_icon(int idx, int cx, int cy, int r, uint32_t col) {
         case 19: // Factory reset (danger)
             d.fillTriangle(cx - r/2, cy + r/2, cx, cy - r/2, cx + r/2, cy + r/2, col);
             break;
-        case 20: // Reboot
+        case 20: // Boot loader style
+            d.drawRoundRect(cx - r/2, cy - r/3, r, r*2/3, 1, col);
+            d.drawFastHLine(cx - r/2 + 1, cy, r - 2, col);
+            d.fillTriangle(cx + r/2 - 2, cy - r/3 - 1, cx + r/2 + 2, cy - r/3 - 1, cx + r/2, cy - r/3 - 4, col);
+            break;
+        case 21: // Reboot
             d.drawCircle(cx, cy, r/2, col);
             d.drawFastVLine(cx, cy - r/2 - 1, r/2, col);
             break;
@@ -779,6 +791,10 @@ static void bios_apply(int idx) {
             }
             break;
         case 20:
+            k85_boot_loader_style_cycle();
+            k85_config_save();
+            break;
+        case 21:
             if (confirm_action("Reboot device")) {
                 esp_restart();
             }

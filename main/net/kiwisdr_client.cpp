@@ -1,4 +1,4 @@
-#include "kiwisdr_client.h"
+﻿#include "kiwisdr_client.h"
 #include "list_menu.h"
 #include "text_input.h"
 #include "common.h"
@@ -9,6 +9,7 @@
 
 #include "M5Unified.h"
 #include "esp_websocket_client.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_timer.h"
@@ -59,7 +60,25 @@ static esp_websocket_client_handle_t s_ws = nullptr;
 static volatile bool s_connected = false;
 static volatile bool s_running = false;
 static volatile bool s_need_handshake = false;
+static volatile bool s_connect_failed = false;
 static volatile int s_ws_error_code = 0;
+
+// ---------- Запросы от UI-потока к фоновому потоку - ТОЛЬКО так, никогда
+// напрямую из run_session() в esp_websocket_client_* (иначе гонка за
+// внутренний мьютекс клиента параллельно с его же RX-потоком и обрывы
+// соединения - "Could not lock ws-client within 50 timeout"). ----------
+static volatile bool s_want_connect = false;
+static volatile bool s_want_disconnect = false;
+static volatile bool s_want_retune = false;
+
+static volatile bool s_kiwi_task_running = false;
+static TaskHandle_t s_kiwi_task_handle = nullptr;
+
+#define K85_KIWI_TASK_STACK_BYTES 8192
+static_assert(sizeof(StackType_t) == 1,
+    "StackType_t не uint8_t - пересчитай K85_KIWI_TASK_STACK_BYTES!");
+static StaticTask_t s_kiwi_task_buf;
+static StackType_t *s_kiwi_task_stack = nullptr;
 
 static int16_t s_audio_buf[2][K85_KIWI_AUDIO_BUF_SAMPLES];
 static volatile int s_fill_idx = 0;
@@ -71,19 +90,22 @@ static const float K85_SPECTRUM_FREQS[K85_SPECTRUM_BANDS] = {
     200, 300, 400, 550, 700, 900, 1100, 1350, 1600, 1900, 2200, 2500, 2800, 3000, 3200, 3400
 };
 
+// Вызывается ТОЛЬКО из фонового потока (kiwi_background_task) - единственный
+// код во всём файле, который трогает esp_websocket_client_send_text.
 static void send_retune(void) {
     if (!s_connected || !s_ws) return;
     const K85KiwiMode &m = K85_KIWI_MODES[s_mode_idx];
     char cmd[128];
     snprintf(cmd, sizeof(cmd), "SET mod=%s low_cut=%d high_cut=%d freq=%d.000",
              m.kiwi_mod, m.low_cut, m.high_cut, s_freq_khz);
-    int ret = esp_websocket_client_send_text(s_ws, cmd, strlen(cmd), pdMS_TO_TICKS(500));
+    int ret = esp_websocket_client_send_text(s_ws, cmd, strlen(cmd), pdMS_TO_TICKS(1000));
     k85_log("kiwisdr: sent retune '%s' -> ret=%d", cmd, ret);
 }
 
+// Меняет режим и просит фоновый поток отправить ретюн - сама НЕ трогает websocket.
 static void cycle_mode(void) {
     s_mode_idx = (s_mode_idx + 1) % K85_KIWI_MODE_COUNT;
-    send_retune();
+    s_want_retune = true;
 }
 
 static void cycle_volume_down(void) {
@@ -142,11 +164,15 @@ static void handle_audio_frame(const uint8_t *data, int len) {
     if (len <= K85_KIWI_AUDIO_HEADER_SKIP) return;
     if (memcmp(data, "SND", 3) != 0) return;
 
-    const int16_t *samples = (const int16_t *)(data + K85_KIWI_AUDIO_HEADER_SKIP);
+    // KiwiSDR шлёт PCM-сэмплы в big-endian (сетевой порядок байт), а ESP32 -
+    // little-endian. Прямой каст указателя (int16_t*) читал бы байты в
+    // обратном порядке - отсюда был шум/тишина вместо голоса.
+    const uint8_t *sample_bytes = data + K85_KIWI_AUDIO_HEADER_SKIP;
     int n_samples = (len - K85_KIWI_AUDIO_HEADER_SKIP) / 2;
 
     for (int i = 0; i < n_samples; i++) {
-        s_audio_buf[s_fill_idx][s_fill_pos] = samples[i];
+        int16_t sample = (int16_t)((sample_bytes[i * 2] << 8) | sample_bytes[i * 2 + 1]);
+        s_audio_buf[s_fill_idx][s_fill_pos] = sample;
         s_fill_pos++;
         if (s_fill_pos >= K85_KIWI_AUDIO_BUF_SAMPLES) {
             s_buf_ready[s_fill_idx] = true;
@@ -165,7 +191,7 @@ static void ws_event_handler(void *handler_args, esp_event_base_t base, int32_t 
         case WEBSOCKET_EVENT_CONNECTED:
             k85_log("kiwisdr: ws CONNECTED");
             s_connected = true;
-            s_need_handshake = true; // отправим SET-команды из основного цикла, НЕ отсюда - иначе lock timeout
+            s_need_handshake = true; // хендшейк отправит фоновый поток, НЕ отсюда - иначе lock timeout
             break;
         case WEBSOCKET_EVENT_DATA:
             k85_log("kiwisdr: DATA op=%d len=%d payload_off=%d payload_len=%d",
@@ -185,13 +211,25 @@ static void ws_event_handler(void *handler_args, esp_event_base_t base, int32_t 
             s_ws_error_code = (int)data->error_handle.esp_ws_handshake_status_code;
             k85_log("kiwisdr: ws ERROR, handshake_status=%d", s_ws_error_code);
             s_connected = false;
+            s_connect_failed = true;
             break;
         default:
             break;
     }
 }
 
-static bool ws_connect(void) {
+// ---------- Всё, что ниже, вызывается ТОЛЬКО из kiwi_background_task -
+// единственного владельца s_ws. UI-поток (run_session) никогда не трогает
+// esp_websocket_client_* напрямую, только выставляет s_want_* флаги. ----------
+static void do_connect_internal(void) {
+    s_connect_failed = false;
+
+    if (s_ws) {
+        esp_websocket_client_stop(s_ws);
+        esp_websocket_client_destroy(s_ws);
+        s_ws = nullptr;
+    }
+
     char uri[128];
     int64_t ts = esp_timer_get_time() / 1000;
     snprintf(uri, sizeof(uri), "ws://%s:%d/kiwi/%lld/SND", s_host, s_port, (long long)ts);
@@ -201,26 +239,115 @@ static bool ws_connect(void) {
     cfg.uri = uri;
     cfg.reconnect_timeout_ms = 3000;
     cfg.network_timeout_ms = 8000;
+    cfg.task_stack = 4096;
+    cfg.buffer_size = 2048;
+    cfg.disable_auto_reconnect = true;
 
     s_ws = esp_websocket_client_init(&cfg);
     if (!s_ws) {
         k85_log("kiwisdr: client_init FAILED");
-        return false;
+        s_connect_failed = true;
+        return;
     }
 
     esp_websocket_register_events(s_ws, WEBSOCKET_EVENT_ANY, ws_event_handler, nullptr);
     esp_err_t err = esp_websocket_client_start(s_ws);
     k85_log("kiwisdr: client_start ret=%d", (int)err);
-    return err == ESP_OK;
+    if (err != ESP_OK) s_connect_failed = true;
 }
 
-static void ws_disconnect(void) {
+static void do_disconnect_internal(void) {
     if (s_ws) {
         esp_websocket_client_stop(s_ws);
         esp_websocket_client_destroy(s_ws);
         s_ws = nullptr;
     }
     s_connected = false;
+}
+
+static void do_handshake_internal(void) {
+    const char *auth = "SET auth t=kiwi p=";
+    int r1 = esp_websocket_client_send_text(s_ws, auth, strlen(auth), pdMS_TO_TICKS(1000));
+    k85_log("kiwisdr: sent auth ret=%d", r1);
+    vTaskDelay(pdMS_TO_TICKS(200));
+    const char *ar = "SET AR OK in=12000 out=44100";
+    esp_websocket_client_send_text(s_ws, ar, strlen(ar), pdMS_TO_TICKS(1000));
+    vTaskDelay(pdMS_TO_TICKS(200));
+    const char *comp = "SET compression=0";
+    int r2 = esp_websocket_client_send_text(s_ws, comp, strlen(comp), pdMS_TO_TICKS(1000));
+    k85_log("kiwisdr: sent compression ret=%d", r2);
+    vTaskDelay(pdMS_TO_TICKS(200));
+    send_retune();
+}
+
+// Единственный поток, который вообще вызывает esp_websocket_client_* -
+// подключение/хендшейк/ретюн выполняются строго здесь по очереди, плюс тут же
+// проигрывается готовое аудио (это не трогает websocket, но логично держать
+// рядом - тот же ритм, что и приём).
+static void kiwi_background_task(void *arg) {
+    while (s_kiwi_task_running) {
+        if (s_want_connect) {
+            s_want_connect = false;
+            do_connect_internal();
+        }
+        if (s_want_disconnect) {
+            s_want_disconnect = false;
+            do_disconnect_internal();
+        }
+        if (s_need_handshake) {
+            s_need_handshake = false;
+            do_handshake_internal();
+        }
+        if (s_want_retune) {
+            s_want_retune = false;
+            send_retune();
+        }
+
+        for (int i = 0; i < 2; i++) {
+            if (s_buf_ready[i]) {
+                apply_gain(s_audio_buf[i], K85_KIWI_AUDIO_BUF_SAMPLES, K85_KIWI_SOFT_GAIN);
+                compute_spectrum(s_audio_buf[i], K85_KIWI_AUDIO_BUF_SAMPLES);
+                M5.Speaker.playRaw(s_audio_buf[i], K85_KIWI_AUDIO_BUF_SAMPLES, 12000, false, 1);
+                s_buf_ready[i] = false;
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(15));
+    }
+    vTaskDelete(nullptr);
+}
+
+static bool start_kiwi_background_task(void) {
+    if (!s_kiwi_task_stack) {
+        s_kiwi_task_stack = (StackType_t *)heap_caps_malloc(K85_KIWI_TASK_STACK_BYTES, MALLOC_CAP_SPIRAM);
+        if (!s_kiwi_task_stack) {
+            k85_log("kiwisdr: PSRAM stack alloc failed");
+            return false;
+        }
+    }
+    s_kiwi_task_running = true;
+    s_kiwi_task_handle = xTaskCreateStaticPinnedToCore(
+        kiwi_background_task, "k85_kiwi_ws", K85_KIWI_TASK_STACK_BYTES, nullptr, 5,
+        s_kiwi_task_stack, &s_kiwi_task_buf, tskNO_AFFINITY);
+    return s_kiwi_task_handle != nullptr;
+}
+
+static uint32_t lerp_color(uint32_t c1, uint32_t c2, float t) {
+    if (t < 0) t = 0;
+    if (t > 1) t = 1;
+    int r1 = (c1 >> 16) & 0xFF, g1 = (c1 >> 8) & 0xFF, b1 = c1 & 0xFF;
+    int r2 = (c2 >> 16) & 0xFF, g2 = (c2 >> 8) & 0xFF, b2 = c2 & 0xFF;
+    int r = r1 + (int)((r2 - r1) * t);
+    int g = g1 + (int)((g2 - g1) * t);
+    int b = b1 + (int)((b2 - b1) * t);
+    return ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+}
+
+// Тёмно-синий -> зелёный -> жёлтый -> белый - классический вид SDR-вотерфолла.
+static uint32_t spectrum_bar_color(float norm) {
+    if (norm < 0.33f) return lerp_color(0x001040, 0x00CC44, norm / 0.33f);
+    if (norm < 0.66f) return lerp_color(0x00CC44, 0xFFEE00, (norm - 0.33f) / 0.33f);
+    return lerp_color(0xFFEE00, 0xFFFFFF, (norm - 0.66f) / 0.34f);
 }
 
 static void draw_spectrum(int x0, int y0, int w, int h) {
@@ -231,14 +358,21 @@ static void draw_spectrum(int x0, int y0, int w, int h) {
     int peak_idx = 0;
     float peak_val = -1;
     for (int i = 0; i < K85_SPECTRUM_BANDS; i++) {
-        int bh = (int)(h * (s_spectrum[i] / maxv));
-        if (bh < h / 6) bh = h / 6; // минимум - треть-шестая часть высоты, не 1-2px невидимая точка
+        float norm = s_spectrum[i] / maxv;
+        if (norm < 0.0f) norm = 0.0f;
+        if (norm > 1.0f) norm = 1.0f;
+
+        int bh = (int)(h * norm);
+        if (bh < h / 8) bh = h / 8; // минимум - тонкая, но видимая полоска
         if (bh > h) bh = h;
         int bx = x0 + i * band_w;
         int by = y0 + (h - bh);
-        bool is_active = s_spectrum[i] > maxv * 0.4f;
-        uint32_t col = is_active ? 0x00FF66 : 0x225522;
+
+        uint32_t col = spectrum_bar_color(norm);
         M5.Display.fillRect(bx + 1, by, band_w - 2, bh, col);
+        // светлая "шапка" сверху каждой полоски - как на реальных SDR-вотерфоллах
+        M5.Display.fillRect(bx + 1, by, band_w - 2, 2, 0xFFFFFF);
+
         if (s_spectrum[i] > peak_val) { peak_val = s_spectrum[i]; peak_idx = i; }
     }
 
@@ -286,13 +420,51 @@ static void run_session(void) {
     s_vol_idx = 0;
     M5.Speaker.setVolume(K85_KIWI_VOL_LEVELS[s_vol_idx]); // максимум только для сессии SDR
 
-    if (!ws_connect()) {
+    if (!start_kiwi_background_task()) {
         M5.Speaker.setVolume(saved_volume);
-        k85_show_message("WS connect failed\nA+B=back");
+        k85_show_message("Task create failed\n(PSRAM OOM?)\nA+B=back");
         while (true) {
             k85_input_update();
             if (k85_ab_held(500)) { k85_wait_ab_release(); break; }
             vTaskDelay(pdMS_TO_TICKS(30));
+        }
+        return;
+    }
+
+    s_connected = false;
+    s_connect_failed = false;
+    s_want_connect = true; // фоновый поток сам подключится - никогда не вызываем ws-клиент отсюда
+
+    k85_show_message("Connecting...");
+    int64_t wait_start_us = esp_timer_get_time();
+    bool aborted = false;
+    while (!s_connected && !s_connect_failed) {
+        k85_input_update();
+        if (k85_ab_held(500)) {
+            k85_wait_ab_release();
+            aborted = true;
+            break;
+        }
+        if (esp_timer_get_time() - wait_start_us > 6000000) {
+            s_connect_failed = true; // локальный таймаут ожидания - на случай если сервер вообще не отвечает
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+
+    if (aborted || !s_connected) {
+        s_kiwi_task_running = false;
+        vTaskDelay(pdMS_TO_TICKS(100));
+        if (s_ws) { esp_websocket_client_stop(s_ws); esp_websocket_client_destroy(s_ws); s_ws = nullptr; }
+        s_connected = false;
+        M5.Speaker.setVolume(saved_volume);
+        if (!aborted) {
+            k85_show_message("WS connect failed\nA+B=back");
+            while (true) {
+                k85_input_update();
+                if (k85_ab_held(500)) { k85_wait_ab_release(); break; }
+                vTaskDelay(pdMS_TO_TICKS(30));
+            }
         }
         return;
     }
@@ -312,22 +484,6 @@ static void run_session(void) {
             k85_wait_ab_release();
             s_running = false;
             break;
-        }
-
-        if (s_need_handshake) {
-            s_need_handshake = false;
-            const char *auth = "SET auth t=kiwi p=";
-            int r1 = esp_websocket_client_send_text(s_ws, auth, strlen(auth), pdMS_TO_TICKS(1000));
-            k85_log("kiwisdr: sent auth ret=%d", r1);
-            vTaskDelay(pdMS_TO_TICKS(200));
-            const char *ar = "SET AR OK in=12000 out=44100";
-            esp_websocket_client_send_text(s_ws, ar, strlen(ar), pdMS_TO_TICKS(1000));
-            vTaskDelay(pdMS_TO_TICKS(200));
-            const char *comp = "SET compression=0";
-            int r2 = esp_websocket_client_send_text(s_ws, comp, strlen(comp), pdMS_TO_TICKS(1000));
-            k85_log("kiwisdr: sent compression ret=%d", r2);
-            vTaskDelay(pdMS_TO_TICKS(200));
-            send_retune();
         }
 
         int64_t now = esp_timer_get_time();
@@ -375,16 +531,7 @@ static void run_session(void) {
         }
 
         if (s_freq_khz < 0) s_freq_khz = 0;
-        if (retune_needed) send_retune();
-
-        for (int i = 0; i < 2; i++) {
-            if (s_buf_ready[i]) {
-                apply_gain(s_audio_buf[i], K85_KIWI_AUDIO_BUF_SAMPLES, K85_KIWI_SOFT_GAIN);
-                compute_spectrum(s_audio_buf[i], K85_KIWI_AUDIO_BUF_SAMPLES);
-                M5.Speaker.playRaw(s_audio_buf[i], K85_KIWI_AUDIO_BUF_SAMPLES, 12000, false, 1);
-                s_buf_ready[i] = false;
-            }
-        }
+        if (retune_needed) s_want_retune = true; // фоновый поток сам отправит SET
 
         if (now - last_draw > 150000) {
             draw_ui();
@@ -394,7 +541,11 @@ static void run_session(void) {
         vTaskDelay(pdMS_TO_TICKS(20));
     }
 
-    ws_disconnect();
+    s_kiwi_task_running = false;
+    vTaskDelay(pdMS_TO_TICKS(100));
+    if (s_ws) { esp_websocket_client_stop(s_ws); esp_websocket_client_destroy(s_ws); s_ws = nullptr; }
+    s_connected = false;
+
     M5.Speaker.stop();
     M5.Speaker.setVolume(saved_volume); // возвращаем системную громкость как было
 }

@@ -1,4 +1,4 @@
-#include "settings_menu.h"
+﻿#include "settings_menu.h"
 #include "config.h"
 #include "theme.h"
 #include "power.h"
@@ -32,13 +32,13 @@
 #include <cstring>
 #include <cmath>
 
-#define K85_SETTINGS_ITEM_COUNT 19
+#define K85_SETTINGS_ITEM_COUNT 20
 #define K85_SETTINGS_BACK_IDX   (K85_SETTINGS_ITEM_COUNT - 1)
 
 static const char *k85_settings_labels[K85_SETTINGS_ITEM_COUNT] = {
     "Theme", "Brightness", "Battery mode", "Boot style",
     "Device name", "Sound volume", "WiFi", "Reset steps",
-    "Check for updates", "Screen lock", "Status bar", "BG gradient", "Lock screen", "SSH Server", "Menu UI style", "CPU freq", "Power", "Font", "Back",
+    "Check for updates", "Screen lock", "Status bar", "BG gradient", "Lock screen", "SSH Server", "Menu UI style", "CPU freq", "Power", "Font", "Keyboard nav", "Back",
 };
 
 static int s_selected = 0;
@@ -92,7 +92,8 @@ static void settings_value_str(char *out, size_t out_size, int idx) {
         }
         case 16: out[0] = 0; break; // Power (подменю, значение не показываем)
         case 17: snprintf(out, out_size, "%s", k85_font_names[g_config.font_idx >= 0 && g_config.font_idx < K85_FONT_COUNT ? g_config.font_idx : 0]); break;
-        case 18: out[0] = 0; break; // Back
+        case 18: snprintf(out, out_size, "%s", g_config.kbd_nav_mode == 1 ? "IMU (tilt)" : "Classic"); break;
+        case 19: out[0] = 0; break; // Back
         default: out[0] = 0;
     }
 }
@@ -179,6 +180,10 @@ static void draw_settings_icon(int cx, int cy, int r, const char *name, uint32_t
         d.setCursor(cx - r/2, cy - r/3);
         d.setTextColor(col, bg_col);
         d.print("Aa");
+    } else if (!strcmp(name, "Keyboard nav")) {
+        d.drawRoundRect(cx - r, cy - r/2, r * 2, r, r/6, col);
+        d.drawFastHLine(cx - r + 3, cy - r/6, r * 2 - 6, col);
+        d.drawFastHLine(cx - r + 3, cy + r/6, r * 2 - 6, col);
     } else if (!strcmp(name, "Back")) {
         d.drawLine(cx + r/2, cy - r/2, cx - r/2, cy, col);
         d.drawLine(cx - r/2, cy, cx + r/2, cy + r/2, col);
@@ -601,6 +606,9 @@ static void settings_apply_item(int idx) {
         case 17:
             g_config.font_idx = (g_config.font_idx + 1) % K85_FONT_COUNT;
             k85_apply_font(g_config.font_idx);
+            break;
+        case 18:
+            g_config.kbd_nav_mode = (g_config.kbd_nav_mode == 0) ? 1 : 0;
             break;
         default:
             break;

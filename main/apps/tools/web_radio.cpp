@@ -1,4 +1,4 @@
-#include "web_radio.h"
+﻿#include "web_radio.h"
 #include "../../net/wifi.h"
 #include "list_menu.h"
 #include "text_input.h"
@@ -122,10 +122,13 @@ static void handle_audio_frame(const uint8_t *data, int len) {
     int16_t smeter = (int16_t)((data[8] << 8) | data[9]);
     s_smeter_raw = smeter;
 
-    const int16_t *samples = (const int16_t *)(data + K85_WR_AUDIO_HEADER_SKIP);
+    // KiwiSDR шлёт PCM-сэмплы в big-endian, ESP32 - little-endian, поэтому
+    // байты каждого сэмпла нужно поменять местами (как уже сделано для smeter выше).
+    const uint8_t *sample_bytes = data + K85_WR_AUDIO_HEADER_SKIP;
     int n_samples = (len - K85_WR_AUDIO_HEADER_SKIP) / 2;
     for (int i = 0; i < n_samples; i++) {
-        s_audio_buf[s_fill_idx][s_fill_pos] = samples[i];
+        int16_t sample = (int16_t)((sample_bytes[i * 2] << 8) | sample_bytes[i * 2 + 1]);
+        s_audio_buf[s_fill_idx][s_fill_pos] = sample;
         s_fill_pos++;
         if (s_fill_pos >= K85_WR_AUDIO_BUF_SAMPLES) {
             s_buf_ready[s_fill_idx] = true;
@@ -687,7 +690,11 @@ void k85_run_web_radio(void) {
         snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_info.ip));
     }
 
+    uint8_t wr_saved_volume = M5.Speaker.getVolume();
+    M5.Speaker.setVolume(200); // погромче для сессии радио - раньше громкость вообще не трогалась
+
     if (!start_ws_background_task()) {
+        M5.Speaker.setVolume(wr_saved_volume);
         k85_show_message("Task create failed\n(PSRAM OOM?)\nA+B=back");
         while (true) {
             k85_input_update();
@@ -744,6 +751,7 @@ void k85_run_web_radio(void) {
     vTaskDelay(pdMS_TO_TICKS(100));
     if (s_ws) { esp_websocket_client_stop(s_ws); esp_websocket_client_destroy(s_ws); s_ws = nullptr; }
 
+    M5.Speaker.setVolume(wr_saved_volume);
     if (use_own_ap) esp_wifi_set_mode(WIFI_MODE_STA);
     k85_show_message("Web Radio stopped");
     vTaskDelay(pdMS_TO_TICKS(1000));

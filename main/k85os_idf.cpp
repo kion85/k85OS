@@ -1,4 +1,4 @@
-// k85OS v4.1 — порт на ESP-IDF C++
+﻿// k85OS v4.1 — порт на ESP-IDF C++
 // Слой 4: core/rtc_ntp + steps/step_counter + core/device + system/system_info + system/logs_screen
 
 #include "M5Unified.h"
@@ -22,6 +22,7 @@
 #include "core/post_beep.h"
 #include "net/wifi.h"
 #include "net/ssh_server.h"
+#include "net/k85_mqtt.h"
 #include "core/heavy_lock.h"
 #include "core/status_bar.h"
 #include "esp_ota_ops.h"
@@ -38,6 +39,14 @@ static bool s_b_press_armed = false; // нажатие начато в app_main 
 static bool s_b_long_fired = false;
 static int64_t s_b_down_start_us = 0;
 
+// Удержание A = непрерывная прокрутка назад (одиночный тап - как раньше, вперёд на 1).
+static bool s_a_was_down = false;
+static int64_t s_a_down_start_us = 0;
+static bool s_a_hold_active = false;
+static int64_t s_a_last_repeat_us = 0;
+#define K85_MENU_A_HOLD_MS 400
+#define K85_MENU_A_REPEAT_MS 220
+
 // Пересинхронизация B после блокирующих UI-циклов (шторка, menu_activate, lock_screen).
 // Иначе отпускание B, начатого внутри вложенного меню, читается как новое нажатие:
 // Back в тулсах -> повторное открытие тулсов.
@@ -47,6 +56,8 @@ static void k85_btn_resync(void) {
     s_b_press_armed = false;
     s_b_long_fired = false;
     s_b_down_start_us = 0;
+    s_a_was_down = k85_btn_a_is_down();
+    s_a_hold_active = false;
 }
 
 extern "C" void app_main(void) {
@@ -55,6 +66,7 @@ extern "C" void app_main(void) {
 
     k85_log_init();
     k85_log("Boot start");
+    k85_check_panic_screen();
 
     if (!k85_fs_init()) {
         M5.Display.fillScreen(0x000000);
@@ -87,6 +99,15 @@ extern "C" void app_main(void) {
     }
     k85_post_report_check(post_report, PostCode::WIFI_INIT, true);
 
+    // Services: автозапуск при загрузке того, что пользователь включил.
+    if (g_config.ssh_enabled) {
+        k85_ssh_server_start();
+    }
+    if (g_config.mqtt_autostart && g_config.mqtt_broker_uri[0]) {
+        k85_mqtt_connect(g_config.mqtt_broker_uri, g_config.mqtt_client_id,
+                          g_config.mqtt_username, g_config.mqtt_password);
+    }
+
     // TODO: подставить сюда реальный вызов инициализации BT, когда появится отдельная функция
     k85_post_report_check(post_report, PostCode::BT_INIT, true);
 
@@ -105,7 +126,9 @@ extern "C" void app_main(void) {
 
     k85_show_boot_screen();
 
-    k85_ota_start_background_check(6 * 60 * 60 * 1000); // проверка раз в 6 часов
+    if (g_config.ota_bg_check_enabled) {
+        k85_ota_start_background_check(6 * 60 * 60 * 1000); // проверка раз в 6 часов
+    }
 
     k85_menu_init();
     k85_menu_draw();
@@ -131,10 +154,28 @@ extern "C" void app_main(void) {
             continue;
         }
 
-        if (k85_btn_a_pressed()) {
+        bool a_down_now = k85_btn_a_is_down();
+        if (a_down_now && !s_a_was_down) {
+            s_a_down_start_us = esp_timer_get_time();
+            s_a_hold_active = false;
+        }
+        if (a_down_now) {
+            int64_t a_held_ms = (esp_timer_get_time() - s_a_down_start_us) / 1000;
+            if (a_held_ms >= K85_MENU_A_HOLD_MS) {
+                int64_t now_a = esp_timer_get_time();
+                if (!s_a_hold_active || (now_a - s_a_last_repeat_us) >= K85_MENU_A_REPEAT_MS * 1000) {
+                    s_a_hold_active = true;
+                    s_a_last_repeat_us = now_a;
+                    k85_wake_screen();
+                    k85_menu_prev();
+                }
+            }
+        }
+        if (!a_down_now && s_a_was_down && !s_a_hold_active) {
             k85_wake_screen();
             k85_menu_next();
         }
+        s_a_was_down = a_down_now;
 
         bool b_down_now = k85_btn_b_is_down();
 

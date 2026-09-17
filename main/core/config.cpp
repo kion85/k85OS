@@ -1,4 +1,4 @@
-#include "config.h"
+﻿#include "config.h"
 #include "core/profiles.h"
 
 #include <cstdio>
@@ -62,6 +62,8 @@ void k85_config_defaults(k85_config_t *cfg) {
     cfg->ota_locked = false;
     cfg->wifi_disabled = false;
     cfg->bt_disabled = false;
+    cfg->ota_bg_check_enabled = true;
+    cfg->mqtt_autostart = false;
     cfg->lock_enabled = false;
     cfg->lock_password[0] = 0;
     cfg->post_beep_enabled = true;
@@ -258,11 +260,14 @@ static cJSON *cfg_to_json(const k85_config_t *c) {
     cJSON_AddNumberToObject(root, "rotation", c->rotation);
     cJSON_AddNumberToObject(root, "bootstyle_idx", c->bootstyle_idx);
     cJSON_AddNumberToObject(root, "kb_layout", c->kb_layout);
+    cJSON_AddNumberToObject(root, "kbd_nav_mode", c->kbd_nav_mode);
     cJSON_AddNumberToObject(root, "sound_volume", c->sound_volume);
     cJSON_AddNumberToObject(root, "utc_offset", c->utc_offset);
     cJSON_AddBoolToObject(root, "ota_locked", c->ota_locked);
     cJSON_AddBoolToObject(root, "wifi_disabled", c->wifi_disabled);
     cJSON_AddBoolToObject(root, "bt_disabled", c->bt_disabled);
+    cJSON_AddBoolToObject(root, "ota_bg_check_enabled", c->ota_bg_check_enabled);
+    cJSON_AddBoolToObject(root, "mqtt_autostart", c->mqtt_autostart);
     cJSON_AddBoolToObject(root, "lock_enabled", c->lock_enabled);
     cJSON_AddStringToObject(root, "lock_password", c->lock_password);
     cJSON_AddBoolToObject(root, "post_beep_enabled", c->post_beep_enabled);
@@ -275,6 +280,7 @@ static cJSON *cfg_to_json(const k85_config_t *c) {
     cJSON_AddBoolToObject(root, "bg_gradient_enabled", c->bg_gradient_enabled);
     cJSON_AddNumberToObject(root, "menu_ui_style", c->menu_ui_style);
     cJSON_AddNumberToObject(root, "bios_ui_style", c->bios_ui_style);
+    cJSON_AddNumberToObject(root, "boot_loader_style", c->boot_loader_style);
     cJSON_AddNumberToObject(root, "sleep_wake_mode", c->sleep_wake_mode);
     cJSON_AddNumberToObject(root, "lock_shape", c->lock_shape);
     cJSON_AddNumberToObject(root, "lock_particle_color", (double)c->lock_particle_color);
@@ -386,11 +392,14 @@ static void cfg_from_json(cJSON *root, k85_config_t *out) {
     GET_INT("rotation", rotation);
     GET_INT("bootstyle_idx", bootstyle_idx);
     GET_INT("kb_layout", kb_layout);
+    GET_INT("kbd_nav_mode", kbd_nav_mode);
     GET_INT("sound_volume", sound_volume);
     GET_INT("utc_offset", utc_offset);
     { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "ota_locked"); if (_x) out->ota_locked = cJSON_IsTrue(_x); }
     { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "wifi_disabled"); if (_x) out->wifi_disabled = cJSON_IsTrue(_x); }
     { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "bt_disabled"); if (_x) out->bt_disabled = cJSON_IsTrue(_x); }
+    { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "ota_bg_check_enabled"); if (_x) out->ota_bg_check_enabled = cJSON_IsTrue(_x); }
+    { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "mqtt_autostart"); if (_x) out->mqtt_autostart = cJSON_IsTrue(_x); }
     { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "lock_enabled"); if (_x) out->lock_enabled = cJSON_IsTrue(_x); }
     { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "lock_password"); if (_x && cJSON_IsString(_x)) set_str(out->lock_password, sizeof(out->lock_password), _x->valuestring); }
     { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "post_beep_enabled"); if (_x) out->post_beep_enabled = cJSON_IsTrue(_x); }
@@ -403,6 +412,7 @@ static void cfg_from_json(cJSON *root, k85_config_t *out) {
     { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "bg_gradient_enabled"); if (_x) out->bg_gradient_enabled = cJSON_IsTrue(_x); }
     { cJSON *_y = cJSON_GetObjectItemCaseSensitive(root, "menu_ui_style"); if (_y) out->menu_ui_style = _y->valueint; }
     { cJSON *_z = cJSON_GetObjectItemCaseSensitive(root, "bios_ui_style"); if (_z) out->bios_ui_style = _z->valueint; }
+    { cJSON *_bl = cJSON_GetObjectItemCaseSensitive(root, "boot_loader_style"); if (_bl) out->boot_loader_style = _bl->valueint; }
     { cJSON *_sw = cJSON_GetObjectItemCaseSensitive(root, "sleep_wake_mode"); if (_sw) out->sleep_wake_mode = _sw->valueint; }
     { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "lock_shape"); if (_x && cJSON_IsNumber(_x)) out->lock_shape = _x->valueint; }
     { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "lock_particle_color"); if (_x && cJSON_IsNumber(_x)) out->lock_particle_color = (uint32_t)_x->valuedouble; }

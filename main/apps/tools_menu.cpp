@@ -1,4 +1,4 @@
-#include "tools_menu.h"
+﻿#include "tools_menu.h"
 #include "list_menu.h"
 #include "common.h"
 #include "freertos/FreeRTOS.h"
@@ -31,6 +31,8 @@
 #include "tools/orientation.h"
 #include "tools/mqtt_tool.h"
 #include "../net/kiwisdr_client.h"
+#include "tools/disk_cleanup.h"
+#include "tools/services.h"
 #include "M5Unified.h"
 #include <cstring>
 #include <cmath>
@@ -38,7 +40,7 @@
 static const char *TOOLS_ITEMS[] = {
     "WiFi Manager", "Color Test", "Bluetooth Scan", "I2C Scanner",
     "GPIO Control", "Files", "Music Player", "Melodies", "Mic Test",
-    "Air Mouse (screen)", "Air Mouse BLE", "WiFi Hotspot", "Calculator", "Terminal", "IR Remote", "SSH Connect", "Task Manager", "LoRa", "Internet SDR", "Web Radio", "Web Terminal", "Level", "Ping", "Authenticator", "Password Manager", "Orientation", "MQTT", "Back"
+    "Air Mouse (screen)", "Air Mouse BLE", "WiFi Hotspot", "Calculator", "Terminal", "IR Remote", "SSH Connect", "Task Manager", "LoRa", "Internet SDR", "Web Radio", "Web Terminal", "Level", "Ping", "Authenticator", "Password Manager", "Orientation", "MQTT", "Disk Cleanup", "Services", "Back"
 };
 #define TOOLS_COUNT (int)(sizeof(TOOLS_ITEMS) / sizeof(TOOLS_ITEMS[0]))
 
@@ -169,6 +171,14 @@ static void draw_tools_icon(int cx, int cy, int r, const char *name, uint32_t co
         d.fillCircle(cx, cy, r/3, col);
         d.drawArc(cx, cy, r/2, r/2 + 2, 200, 340, col);
         d.drawArc(cx, cy, r, r + 2, 200, 340, col);
+    } else if (!strcmp(name, "Disk Cleanup")) {
+        d.drawCircle(cx, cy, r, col);
+        d.fillRect(cx - r/2, cy - 1, r, 2, col);
+        d.fillTriangle(cx - r/3, cy, cx + r/3, cy, cx, cy + r/2, col);
+    } else if (!strcmp(name, "Services")) {
+        d.fillCircle(cx, cy, r/3, col);
+        d.drawArc(cx, cy, r/2, r/2 + 2, 200, 340, col);
+        d.drawArc(cx, cy, r, r + 2, 200, 340, col);
     } else if (!strcmp(name, "Back")) {
         d.drawLine(cx + r/2, cy - r/2, cx - r/2, cy, col);
         d.drawLine(cx - r/2, cy, cx + r/2, cy + r/2, col);
@@ -244,5 +254,7 @@ void k85_run_tools_menu(void) {
         else if (idx == 24) k85_run_password_manager();
         else if (idx == 25) k85_run_orientation();
         else if (idx == 26) k85_run_mqtt_tool();
+        else if (idx == 27) k85_run_disk_cleanup();
+        else if (idx == 28) k85_run_services();
     }
 }

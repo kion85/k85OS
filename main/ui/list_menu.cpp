@@ -6,6 +6,7 @@
 #include "input.h"
 #include "config.h"
 #include "M5Unified.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <cstring>
@@ -186,6 +187,13 @@ int k85_run_list_menu(const char *title, const char *const items[], int count,
     int H = M5.Display.height();
     int style = g_config.menu_ui_style; // 0=list, 1=grid+icons, 2=list+icons (та же схема, что и в главном меню)
 
+    // Двойной тап B = обычный Back (-1). Ничего менять в вызывающих меню
+    // (Tools/Apps/WiFi/Games/Clock и т.д.) не нужно - они и так выходят на
+    // -1 так же, как при A+B или выборе "Back".
+    bool b_tap_pending = false;
+    int64_t b_tap_pending_since = 0;
+    const int64_t double_tap_window_us = 350000;
+
     while (true) {
         if (sel >= count) sel = count - 1;
 
@@ -221,6 +229,16 @@ int k85_run_list_menu(const char *title, const char *const items[], int count,
             }
             if (k85_btn_b_pressed()) {
                 k85_wake_screen();
+                int64_t now = esp_timer_get_time();
+                if (b_tap_pending && (now - b_tap_pending_since) < double_tap_window_us) {
+                    k85_log("list_menu DOUBLE B -> back: title=%s", title);
+                    return -1;
+                }
+                b_tap_pending = true;
+                b_tap_pending_since = now;
+            }
+            if (b_tap_pending && (esp_timer_get_time() - b_tap_pending_since) >= double_tap_window_us) {
+                b_tap_pending = false;
                 k85_log("list_menu B pressed: title=%s sel=%d item=%s", title, sel, items[sel]);
                 if (!strcmp(items[sel], "Back")) return -1;
                 return sel;

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -39,11 +39,14 @@ typedef struct {
     int rotation;
     int bootstyle_idx;
     int kb_layout;
+    int kbd_nav_mode; // 0=Classic (A/B buttons), 1=IMU (tilt navigation)
     int sound_volume;
     int utc_offset; // -12..+12, часовой пояс относительно UTC
     bool ota_locked;   // true = блокирует OTA-обновления по воздуху
     bool wifi_disabled; // true = модуль WiFi выключен пользователем
     bool bt_disabled;   // true = модуль Bluetooth выключен пользователем
+    bool ota_bg_check_enabled; // true = фоновая проверка обновлений каждые 6ч (Services)
+    bool mqtt_autostart;       // true = автоподключение к MQTT-брокеру при загрузке (Services)
     bool lock_enabled;
     char lock_password[100]; // hex: [16 байт соли][32 байта PBKDF2-хеша]
     bool post_beep_enabled;
@@ -56,6 +59,7 @@ typedef struct {
     bool bg_gradient_enabled;
     int menu_ui_style; // 0=List, 1=Grid, 2=List+Icons
     int bios_ui_style; // 0=List, 1=Grid, 2=List+Icons
+    int boot_loader_style; // 0=k85OS Boot Menu, 1=k85OS BIOS Boot, 2=GRUB-style, 3=rEFInd-style
     int sleep_wake_mode; // 0=Button A, 1=IMU, 2=Both
     int lock_shape; // 0=circle 1=square 2=mixed
     uint32_t lock_particle_color; // 0xFFFFFFFF = авто-палитра

@@ -1,4 +1,4 @@
-idf_component_register(
+﻿idf_component_register(
     SRCS "k85os_idf.cpp"
          "core/config.cpp"
          "core/theme.cpp"
@@ -94,6 +94,8 @@ idf_component_register(
          "apps/tools/password_manager.cpp"
          "apps/tools/orientation.cpp"
          "apps/tools/mqtt_tool.cpp"
+         "apps/tools/disk_cleanup.cpp"
+         "apps/tools/services.cpp"
          "net/ota_verify.cpp"
     INCLUDE_DIRS "." "core" "ui" "steps" "system" "net" "apps" "apps/games" "apps/tools" "ble_hid"
     PRIV_REQUIRES json esp_netif esp_driver_tsens esp_wifi nvs_flash esp_event esp_driver_i2c esp_driver_gpio bt esp_driver_rmt esp_https_ota esp_http_client app_update mbedtls esp-libhelix-mp3 mbedtls wolfssl wolfssh esp_psram esp_websocket_client mqtt mdns

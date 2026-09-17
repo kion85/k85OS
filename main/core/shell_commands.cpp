@@ -1,4 +1,4 @@
-#pragma GCC diagnostic push
+﻿#pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat-truncation"
 
 #include "shell_commands.h"
@@ -13,6 +13,8 @@
 #include "esp_timer.h"
 
 #include "M5Unified.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #include <dirent.h>
 #include <sys/stat.h>
@@ -102,6 +104,38 @@ static void cmd_cat(const char *arg, char *out, size_t out_size) {
     strcat(out, "\r\n");
 }
 
+#define K85_SHELL_PS_MAX_TASKS 24
+
+static const char *ps_state_letter(eTaskState st) {
+    switch (st) {
+        case eRunning:   return "R";
+        case eReady:     return "Y";
+        case eBlocked:   return "B";
+        case eSuspended: return "S";
+        case eDeleted:   return "D";
+        default:         return "?";
+    }
+}
+
+static void cmd_ps(char *out, size_t out_size) {
+    static TaskStatus_t tasks[K85_SHELL_PS_MAX_TASKS];
+    UBaseType_t count = uxTaskGetNumberOfTasks();
+    if (count > K85_SHELL_PS_MAX_TASKS) count = K85_SHELL_PS_MAX_TASKS;
+    uint32_t total_runtime;
+    count = uxTaskGetSystemState(tasks, count, &total_runtime);
+
+    size_t used = 0;
+    int w = snprintf(out + used, out_size - used, "NAME            ST PRI STACK\r\n");
+    if (w > 0) used += (size_t)w;
+    for (UBaseType_t i = 0; i < count && used + 40 < out_size; i++) {
+        TaskStatus_t *t = &tasks[i];
+        int ww = snprintf(out + used, out_size - used, "%-15.15s %s %3u %5uB\r\n",
+                           t->pcTaskName, ps_state_letter(t->eCurrentState),
+                           (unsigned)t->uxCurrentPriority, (unsigned)t->usStackHighWaterMark);
+        if (ww > 0) used += (size_t)ww;
+    }
+}
+
 void k85_shell_run_command(const char *cmd_full, char *out, size_t out_size) {
     char cmd[32] = {0};
     const char *arg = "";
@@ -118,10 +152,12 @@ void k85_shell_run_command(const char *cmd_full, char *out, size_t out_size) {
     if (!strcmp(cmd, "help")) {
         snprintf(out, out_size,
             "Commands:\r\n"
-            "  info, free, uptime, battery, wifi, imu\r\n"
+            "  info, free, uptime, battery, wifi, imu, ps\r\n"
             "  ls [dir], cat <file>\r\n"
             "  wifi-on, wifi-off, brightness <0-100>, volume <0-100>\r\n"
             "  reboot, exit\r\n");
+    } else if (!strcmp(cmd, "ps") || !strcmp(cmd, "htop")) {
+        cmd_ps(out, out_size);
     } else if (!strcmp(cmd, "info")) {
         cmd_info(out, out_size);
     } else if (!strcmp(cmd, "free")) {
@@ -162,6 +198,12 @@ void k85_shell_run_command(const char *cmd_full, char *out, size_t out_size) {
         g_config.sound_volume = v;
         k85_config_save();
         snprintf(out, out_size, "Volume set to %d%%\r\n", v);
+    } else if (!strcmp(cmd, "panic-test")) {
+        // Тестовая команда: намеренно роняет прошивку через abort() ->
+        // ESP-IDF сохраняет причину как ESP_RST_PANIC, при следующей
+        // загрузке сработает k85_check_panic_screen(). Безопасно - не
+        // трогает флеш/LittleFS, просто немедленный краш+перезагрузка.
+        abort();
     } else if (!strcmp(cmd, "reboot")) {
         snprintf(out, out_size, "Rebooting...\r\n");
     } else if (strlen(cmd) == 0) {

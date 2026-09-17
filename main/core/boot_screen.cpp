@@ -1,4 +1,4 @@
-#include "boot_screen.h"
+﻿#include "boot_screen.h"
 #include "config.h"
 #include "theme.h"
 #include "boot_theme.h"
@@ -9,6 +9,7 @@
 #include "M5Unified.h"
 #include "esp_timer.h"
 #include "esp_ota_ops.h"
+#include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -16,13 +17,21 @@
 #include <cstring>
 #include <cmath>
 
-#define K85_FW_VERSION "6.6"
+#define K85_FW_VERSION "7.0"
 #define K85_BOOT_DURATION_MS 4000
 #define K85_BOOT_MENU_TIMEOUT_MS 3000
 
 const char *k85_boot_style_names[K85_BOOT_STYLE_COUNT] = {
     "Classic bar", "Spinner circle", "Static text",
 };
+
+const char *k85_boot_loader_style_names[K85_BOOT_LOADER_STYLE_COUNT] = {
+    "k85OS Boot Menu", "k85OS BIOS Boot", "GRUB-style", "rEFInd-style",
+};
+
+void k85_boot_loader_style_cycle(void) {
+    g_config.boot_loader_style = (g_config.boot_loader_style + 1) % K85_BOOT_LOADER_STYLE_COUNT;
+}
 
 static K85BootTheme s_boot_theme;
 static bool try_draw_custom_logo(const K85BootTheme &theme);
@@ -238,6 +247,138 @@ static void draw_boot_menu(int selected, int seconds_left) {
     }
 }
 
+// ---------- k85OS BIOS Boot: строгий текстовый стиль, диски как FlashN ----------
+static const char *k85_bootloader_items_bios[K85_BOOT_MENU_ITEM_COUNT] = {
+    "Flash1 (Normal)", "Flash2 (BIOS)", "Flash3 (Test)", "Flash4 (Alt FW)"
+};
+
+static void draw_boot_menu_bios(int selected, int seconds_left) {
+    uint32_t bg = 0x000000;
+    uint32_t fg = 0xC0C0C0;
+    uint32_t accent = 0xFFFFFF;
+
+    M5.Display.fillScreen(bg);
+    M5.Display.setTextSize(1);
+    M5.Display.setTextColor(fg, bg);
+    M5.Display.setCursor(4, 4);
+    M5.Display.print("k85OS BIOS Boot");
+    M5.Display.setCursor(4, 14);
+    M5.Display.print("Select boot device:");
+
+    int y = 30;
+    for (int i = 0; i < K85_BOOT_MENU_ITEM_COUNT; i++) {
+        bool sel = (i == selected);
+        M5.Display.setTextColor(sel ? accent : fg, bg);
+        M5.Display.setCursor(8, y);
+        M5.Display.print(sel ? "> " : "  ");
+        M5.Display.print(k85_bootloader_items_bios[i]);
+        y += 12;
+    }
+
+    M5.Display.setTextColor(0x777777, bg);
+    M5.Display.setCursor(4, M5.Display.height() - 20);
+    if (seconds_left > 0) {
+        M5.Display.printf("Auto-boot %ds", seconds_left);
+    }
+    M5.Display.setCursor(4, M5.Display.height() - 10);
+    M5.Display.print("A=next B=select");
+}
+
+// ---------- GRUB-style ----------
+static const char *k85_bootloader_items_grub[K85_BOOT_MENU_ITEM_COUNT] = {
+    "k85OS", "k85OS (BIOS / recovery)", "Test Mode", "Alternate Firmware"
+};
+
+static void draw_boot_menu_grub(int selected, int seconds_left) {
+    uint32_t bg = 0x000000;
+    uint32_t fg = 0xFFFFFF;
+    uint32_t sel_bg = 0xFFFFFF;
+    uint32_t sel_fg = 0x000000;
+
+    M5.Display.fillScreen(bg);
+    M5.Display.setTextSize(1);
+    M5.Display.setTextColor(0x00AA00, bg);
+    M5.Display.setCursor(4, 4);
+    M5.Display.print("GNU k85GRUB  version 2.06-k85");
+
+    int y = 24;
+    int w = M5.Display.width();
+    for (int i = 0; i < K85_BOOT_MENU_ITEM_COUNT; i++) {
+        bool sel = (i == selected);
+        if (sel) {
+            M5.Display.fillRect(4, y - 1, w - 8, 11, sel_bg);
+        }
+        M5.Display.setTextColor(sel ? sel_fg : fg, sel ? sel_bg : bg);
+        M5.Display.setCursor(8, y);
+        M5.Display.print(k85_bootloader_items_grub[i]);
+        y += 13;
+    }
+
+    M5.Display.setTextColor(0x888888, bg);
+    M5.Display.setCursor(4, M5.Display.height() - 20);
+    M5.Display.print("Use A to move, B to boot");
+    if (seconds_left > 0) {
+        M5.Display.setCursor(4, M5.Display.height() - 10);
+        M5.Display.printf("booting in %ds...", seconds_left);
+    }
+}
+
+// ---------- rEFInd-style: горизонтальная галерея боксов ----------
+static const char *k85_bootloader_items_refind[K85_BOOT_MENU_ITEM_COUNT] = {
+    "k85OS", "BIOS", "Test", "AltFW"
+};
+
+static void draw_boot_menu_refind(int selected, int seconds_left) {
+    uint32_t bg = 0x101010;
+    uint32_t fg = 0xEEEEEE;
+    uint32_t accent = 0x3399FF;
+
+    M5.Display.fillScreen(bg);
+    int w = M5.Display.width();
+    int h = M5.Display.height();
+
+    int box_w = w / K85_BOOT_MENU_ITEM_COUNT;
+    int box_h = h - 40;
+    int top = 10;
+
+    for (int i = 0; i < K85_BOOT_MENU_ITEM_COUNT; i++) {
+        bool sel = (i == selected);
+        int x = i * box_w;
+        M5.Display.drawRoundRect(x + 3, top, box_w - 6, box_h, 6, sel ? accent : 0x444444);
+        if (sel) {
+            M5.Display.drawRoundRect(x + 4, top + 1, box_w - 8, box_h - 2, 5, accent);
+        }
+        M5.Display.setTextSize(1);
+        M5.Display.setTextColor(sel ? accent : fg, bg);
+        const char *label = k85_bootloader_items_refind[i];
+        int lw = (int)strlen(label) * 6;
+        int tx = x + (box_w - lw) / 2;
+        int ty = top + box_h / 2;
+        M5.Display.setCursor(tx, ty);
+        M5.Display.print(label);
+    }
+
+    M5.Display.setTextColor(0x888888, bg);
+    M5.Display.setCursor(4, h - 12);
+    M5.Display.print("A=next B=boot");
+    if (seconds_left > 0) {
+        M5.Display.setCursor(w - 40, h - 12);
+        M5.Display.printf("%ds", seconds_left);
+    }
+}
+
+// Диспетчер: выбирает draw-функцию по g_config.boot_loader_style.
+// style 0 (k85OS Boot Menu, текущий) рисует draw_boot_menu() как раньше.
+static void draw_boot_menu_dispatch(int selected, int seconds_left) {
+    int style = g_config.boot_loader_style;
+    switch (style) {
+        case 1: draw_boot_menu_bios(selected, seconds_left); break;
+        case 2: draw_boot_menu_grub(selected, seconds_left); break;
+        case 3: draw_boot_menu_refind(selected, seconds_left); break;
+        default: draw_boot_menu(selected, seconds_left); break;
+    }
+}
+
 static BootChoice run_boot_menu(void) {
     int selected = 0;
     bool interacted = false;
@@ -252,14 +393,14 @@ static BootChoice run_boot_menu(void) {
         if (seconds_left < 0) seconds_left = 0;
 
         if (seconds_left != last_seconds_shown) {
-            draw_boot_menu(selected, seconds_left);
+            draw_boot_menu_dispatch(selected, seconds_left);
             last_seconds_shown = seconds_left;
         }
 
         if (k85_btn_a_pressed()) {
             interacted = true;
             selected = (selected + 1) % K85_BOOT_MENU_ITEM_COUNT;
-            draw_boot_menu(selected, 0);
+            draw_boot_menu_dispatch(selected, 0);
             last_seconds_shown = 0;
         }
         if (k85_btn_b_pressed()) {
@@ -270,6 +411,55 @@ static BootChoice run_boot_menu(void) {
             return BOOT_NORMAL;
         }
 
+        vTaskDelay(pdMS_TO_TICKS(30));
+    }
+}
+
+static const char *panic_reason_str(esp_reset_reason_t r) {
+    switch (r) {
+        case ESP_RST_PANIC:    return "Kernel panic (unhandled exception)";
+        case ESP_RST_TASK_WDT: return "Task watchdog timeout";
+        case ESP_RST_INT_WDT:  return "Interrupt watchdog timeout";
+        case ESP_RST_WDT:      return "Other watchdog reset";
+        case ESP_RST_BROWNOUT: return "Brownout (power supply fault)";
+        default:                return "Unknown fault";
+    }
+}
+
+void k85_check_panic_screen(void) {
+    esp_reset_reason_t r = esp_reset_reason();
+    bool is_fault = (r == ESP_RST_PANIC || r == ESP_RST_TASK_WDT || r == ESP_RST_INT_WDT ||
+                      r == ESP_RST_WDT || r == ESP_RST_BROWNOUT);
+    if (!is_fault) return;
+
+    int H = M5.Display.height();
+    M5.Display.fillScreen(0x000000);
+    M5.Display.setTextSize(1);
+    M5.Display.setTextColor(0xFF4444, 0x000000);
+    M5.Display.setCursor(4, 4);
+    M5.Display.print("*** KERNEL PANIC ***");
+
+    M5.Display.setTextColor(0xCCCCCC, 0x000000);
+    M5.Display.setCursor(4, 18);
+    M5.Display.print("k85OS / FreeRTOS fault detected");
+
+    M5.Display.setTextColor(0xFFFFFF, 0x000000);
+    M5.Display.setCursor(4, 34);
+    M5.Display.print("Reason:");
+    M5.Display.setCursor(4, 46);
+    M5.Display.print(panic_reason_str(r));
+
+    M5.Display.setTextColor(0x888888, 0x000000);
+    M5.Display.setCursor(4, H - 20);
+    M5.Display.print("Device recovered and rebooted.");
+    M5.Display.setCursor(4, H - 10);
+    M5.Display.print("Press A+B to continue booting");
+
+    int64_t start_us = esp_timer_get_time();
+    while (true) {
+        k85_input_update();
+        if (k85_ab_held(500)) { k85_wait_ab_release(); break; }
+        if (esp_timer_get_time() - start_us > 15000000) break; // авто-продолжение через 15с
         vTaskDelay(pdMS_TO_TICKS(30));
     }
 }

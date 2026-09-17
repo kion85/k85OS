@@ -1,4 +1,4 @@
-﻿#include "files.h"
+#include "files.h"
 #include "common.h"
 #include "text_input.h"
 #include "list_menu.h"
@@ -10,6 +10,9 @@
 #include "../../core/bios_theme.h"
 #include "../../core/boot_theme.h"
 #include "../../core/config.h"
+#include "music_player.h"
+
+#include "M5Unified.h"
 
 #include <dirent.h>
 #include <sys/stat.h>
@@ -22,58 +25,246 @@
 #define K85_CUSTOM_THEME_MAX_HINT 8
 
 #define K85_FB_MAX_ENTRIES 40
+#define K85_FILE_EDIT_MAX_BYTES 2047 // должно совпадать с буфером в k85_text_input_multiline
 
 struct FbEntry {
-    char name[48];
+    char name[64];
     bool is_dir;
     long size;
 };
 
-// Показывает первые байты файла: как текст (если похоже на текст) или hex-дамп.
-static bool looks_like_text(const unsigned char *buf, size_t len) {
-    for (size_t i = 0; i < len; i++) {
-        unsigned char c = buf[i];
-        if (c == 0 || (c < 9) || (c > 13 && c < 32)) return false;
+static void wait_ab_exit(void) {
+    while (true) {
+        k85_input_update();
+        if (k85_ab_held(500)) { k85_wait_ab_release(); return; }
+        vTaskDelay(pdMS_TO_TICKS(30));
     }
-    return true;
 }
 
-static void preview_file(const char *full_path, const char *name, long size) {
-    unsigned char buf[64] = {0};
+// ---------- Read: постраничный просмотр содержимого файла ----------
+static void read_file_view(const char *full_path, const char *name, long size) {
     FILE *f = fopen(full_path, "rb");
-    size_t read_n = 0;
+    if (!f) {
+        k85_show_message("Open failed\nA+B=back");
+        wait_ab_exit();
+        return;
+    }
+    static char buf[4096];
+    size_t read_n = fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    buf[read_n] = 0;
+    bool truncated = (size > (long)(sizeof(buf) - 1));
+
+    uint32_t bg = k85_get_bg();
+    uint32_t fg = k85_get_fg();
+    uint32_t accent = k85_get_accent();
+    int w = M5.Display.width();
+    int h = M5.Display.height();
+    int chars_per_line = w / 6;
+    int lines_per_page = (h - 26) / 10;
+    int chars_per_page = chars_per_line * lines_per_page;
+    if (chars_per_page < 16) chars_per_page = 16;
+
+    int page_count = (int)((read_n + (size_t)chars_per_page - 1) / (size_t)chars_per_page);
+    if (page_count < 1) page_count = 1;
+    int page = 0;
+
+    while (true) {
+        M5.Display.fillScreen(bg);
+        M5.Display.setTextSize(1);
+        M5.Display.setTextColor(accent, bg);
+        M5.Display.setCursor(4, 2);
+        M5.Display.printf("%.16s  %ldB  [%d/%d]", name, size, page + 1, page_count);
+
+        M5.Display.setTextColor(fg, bg);
+        M5.Display.setCursor(4, 14);
+        M5.Display.setTextWrap(true, false);
+        size_t start = (size_t)page * (size_t)chars_per_page;
+        size_t remain = read_n > start ? read_n - start : 0;
+        size_t show_len = remain < (size_t)chars_per_page ? remain : (size_t)chars_per_page;
+        M5.Display.printf("%.*s", (int)show_len, buf + start);
+        M5.Display.setTextWrap(false, false);
+
+        M5.Display.setTextColor(0xAAAAAA, bg);
+        M5.Display.setCursor(4, h - 12);
+        if (truncated && page == page_count - 1) {
+            M5.Display.print("A=next A+B=back (truncated)");
+        } else {
+            M5.Display.print("A=next page  A+B=back");
+        }
+
+        while (true) {
+            k85_input_update();
+            if (k85_ab_held(500)) { k85_wait_ab_release(); return; }
+            if (k85_btn_a_pressed()) { page = (page + 1) % page_count; break; }
+            vTaskDelay(pdMS_TO_TICKS(30));
+        }
+    }
+}
+
+// ---------- Write: редактирование файла через многострочную клавиатуру ----------
+static void write_file_edit(const char *full_path, const char *name) {
+    static char content[K85_FILE_EDIT_MAX_BYTES + 1];
+    content[0] = 0;
+
+    FILE *f = fopen(full_path, "rb");
     if (f) {
-        read_n = fread(buf, 1, sizeof(buf), f);
+        size_t n = fread(content, 1, sizeof(content) - 1, f);
+        content[n] = 0;
         fclose(f);
     }
 
-    char msg[300];
-    int used = snprintf(msg, sizeof(msg), "%.30s\nSize: %ldB\n\n", name, size);
-
-    if (read_n == 0) {
-        snprintf(msg + used, sizeof(msg) - used, "(empty or unreadable)\nA+B=back");
-    } else if (looks_like_text(buf, read_n)) {
-        int n = (int)read_n;
-        if (n > 80) n = 80;
-        char text_part[81];
-        memcpy(text_part, buf, n);
-        text_part[n] = 0;
-        snprintf(msg + used, sizeof(msg) - used, "%.80s\nA+B=back", text_part);
-    } else {
-        char hex[3 * 16 + 1] = {0};
-        int hn = 0;
-        int show = (int)read_n < 16 ? (int)read_n : 16;
-        for (int i = 0; i < show; i++) {
-            hn += snprintf(hex + hn, sizeof(hex) - hn, "%02X ", buf[i]);
-        }
-        snprintf(msg + used, sizeof(msg) - used, "hex: %s\nA+B=back", hex);
+    static char edited[K85_FILE_EDIT_MAX_BYTES + 1];
+    if (!k85_text_input_multiline(name, content, edited, sizeof(edited))) {
+        return; // EXIT - изменения отброшены
     }
-    k85_show_message(msg);
 
+    FILE *fw = fopen(full_path, "wb");
+    if (!fw) {
+        k85_show_message("Write failed\nA+B=back");
+        wait_ab_exit();
+        return;
+    }
+    fwrite(edited, 1, strlen(edited), fw);
+    fclose(fw);
+
+    k85_show_message("Saved!\nA+B=back");
+    wait_ab_exit();
+}
+
+// ---------- Delete ----------
+// Возвращает true, если файл реально удалён (чтобы вызывающий код мог
+// закрыть меню действий и обновить список).
+static bool delete_file_confirm(const char *full_path, const char *name) {
+    char msg[96];
+    snprintf(msg, sizeof(msg), "Delete %.40s?\nB=confirm A+B=cancel", name);
+    k85_show_message(msg);
     while (true) {
         k85_input_update();
-        if (k85_ab_held(500)) { k85_wait_ab_release(); break; }
+        if (k85_ab_held(500)) { k85_wait_ab_release(); return false; }
+        if (k85_btn_b_pressed()) break;
         vTaskDelay(pdMS_TO_TICKS(30));
+    }
+    bool ok = (remove(full_path) == 0);
+    k85_show_message(ok ? "Deleted!\nA+B=back" : "Delete failed\nA+B=back");
+    wait_ab_exit();
+    return ok;
+}
+
+// ---------- Run: действие зависит от расширения файла ----------
+// Пока поддержаны только .thm (применяется как обычная тема устройства -
+// та же логика, что в apply_theme_picker, но для конкретного выбранного
+// файла вместо выбора из общего списка). Для остальных типов - заглушка.
+static void run_file(const char *full_path, const char *name) {
+    size_t len = strlen(name);
+    bool is_thm = (len > 4 && !strcasecmp(name + len - 4, ".thm"));
+    bool is_mp3 = (len > 4 && !strcasecmp(name + len - 4, ".mp3"));
+    bool is_wav = (len > 4 && !strcasecmp(name + len - 4, ".wav"));
+    if (is_mp3 || is_wav) {
+        k85_play_audio_file(full_path);
+        return;
+    }
+
+    if (!is_thm) {
+        k85_show_message("Run: not supported\nfor this file type\nA+B=back");
+        wait_ab_exit();
+        return;
+    }
+
+    char msg[96];
+    snprintf(msg, sizeof(msg), "Apply %.40s\nas active theme?\nB=confirm A+B=cancel", name);
+    k85_show_message(msg);
+    bool confirmed = false;
+    while (true) {
+        k85_input_update();
+        if (k85_ab_held(500)) { k85_wait_ab_release(); return; }
+        if (k85_btn_b_pressed()) { confirmed = true; break; }
+        vTaskDelay(pdMS_TO_TICKS(30));
+    }
+    if (!confirmed) return;
+
+    // Копируем выбранный .thm в /littlefs (папку с пользовательскими темами),
+    // затем перезагружаем список тем и применяем именно этот файл.
+    char dst[192];
+    snprintf(dst, sizeof(dst), "/littlefs/%s", name);
+
+    if (strcmp(full_path, dst) != 0) {
+        FILE *fsrc = fopen(full_path, "rb");
+        FILE *fdst = fopen(dst, "wb");
+        if (fsrc && fdst) {
+            char buf[256];
+            size_t r;
+            while ((r = fread(buf, 1, sizeof(buf), fsrc)) > 0) fwrite(buf, 1, r, fdst);
+        }
+        if (fsrc) fclose(fsrc);
+        if (fdst) fclose(fdst);
+    }
+
+    k85_themes_load_custom();
+    int total = k85_theme_count();
+    int applied_idx = -1;
+    for (int i = K85_THEME_COUNT; i < total; i++) {
+        if (!strcmp(k85_get_theme_by_index(i)->name, name)) { applied_idx = i; break; }
+    }
+    if (applied_idx < 0) {
+        k85_show_message("Apply failed\n(invalid theme file?)\nA+B=back");
+        wait_ab_exit();
+        return;
+    }
+
+    g_config.theme_idx = applied_idx;
+    k85_config_save();
+    k85_show_message("Theme applied!\nA+B=back");
+    wait_ab_exit();
+}
+
+static void view_edit_menu(const char *full_path, const char *name, long size) {
+    static const char *items[] = {"Read", "Write", "Back"};
+    while (true) {
+        int idx = k85_run_list_menu(name, items, 3, nullptr);
+        if (idx < 0 || idx == 2) return;
+        if (idx == 0) read_file_view(full_path, name, size);
+        else if (idx == 1) write_file_edit(full_path, name);
+    }
+}
+
+// Возвращает true, если файл был удалён (вызывающий код должен обновить список).
+// Возвращает true, если файл переименован (путь изменился - вызывающий
+// код должен выйти из меню действий, чтобы список обновился под новым именем).
+static bool rename_file_confirm(const char *full_path, const char *name) {
+    char new_name[64] = "";
+    snprintf(new_name, sizeof(new_name), "%s", name);
+    if (!k85_text_input("New name:", new_name, new_name, sizeof(new_name)) || !new_name[0]) return false;
+    if (!strcmp(new_name, name)) return false; // имя не изменилось
+
+    char dir[256];
+    snprintf(dir, sizeof(dir), "%s", full_path);
+    char *last_slash = strrchr(dir, '/');
+    if (last_slash) *last_slash = 0;
+
+    char new_path[300];
+    snprintf(new_path, sizeof(new_path), "%s/%s", dir, new_name);
+
+    bool ok = (rename(full_path, new_path) == 0);
+    k85_show_message(ok ? "Renamed!\nA+B=back" : "Rename failed\nA+B=back");
+    wait_ab_exit();
+    return ok;
+}
+
+static bool file_action_menu(const char *full_path, const char *name, long size) {
+    static const char *items[] = {"View/Edit", "Run", "Rename", "Delete", "Back"};
+    while (true) {
+        int idx = k85_run_list_menu(name, items, 5, nullptr);
+        if (idx < 0 || idx == 4) return false;
+        if (idx == 0) {
+            view_edit_menu(full_path, name, size);
+        } else if (idx == 1) {
+            run_file(full_path, name);
+        } else if (idx == 2) {
+            if (rename_file_confirm(full_path, name)) return true;
+        } else if (idx == 3) {
+            if (delete_file_confirm(full_path, name)) return true;
+        }
     }
 }
 
@@ -90,7 +281,7 @@ static int fb_list_entries(const char *dir_path, FbEntry out[], int max_n) {
         struct stat st;
         if (stat(full, &st) != 0) continue;
 
-        snprintf(out[n].name, sizeof(out[n].name), "%.44s", ent->d_name);
+        snprintf(out[n].name, sizeof(out[n].name), "%.60s", ent->d_name);
         out[n].is_dir = S_ISDIR(st.st_mode);
         out[n].size = out[n].is_dir ? 0 : (long)st.st_size;
         n++;
@@ -157,7 +348,9 @@ static void browse_dir(const char *root) {
         } else {
             char full_path[300];
             snprintf(full_path, sizeof(full_path), "%s/%s", current, entries[local_idx].name);
-            preview_file(full_path, entries[local_idx].name, entries[local_idx].size);
+            file_action_menu(full_path, entries[local_idx].name, entries[local_idx].size);
+            // Список entries[] мог устареть (файл переименован/удалён/изменён) -
+            // внешний while(true) сам перечитает директорию на следующей итерации.
         }
     }
 }
@@ -427,5 +620,3 @@ void k85_run_files(void) {
 }
 
 #pragma GCC diagnostic pop
-
-
