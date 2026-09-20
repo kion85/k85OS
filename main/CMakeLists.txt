@@ -1,6 +1,7 @@
 ﻿idf_component_register(
     SRCS "k85os_idf.cpp"
          "core/config.cpp"
+         "core/cursor.cpp"
          "core/theme.cpp"
          "core/input.cpp"
          "core/power.cpp"

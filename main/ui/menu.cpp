@@ -22,6 +22,8 @@
 #include "../apps/apps_menu.h"
 #include "wifi.h"
 #include "M5Unified.h"
+#include "esp_timer.h"
+#include "../core/cursor.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -164,6 +166,7 @@ static void draw_menu_icon(int cx, int cy, int r, const char *name, uint32_t col
 
 static void draw_menu_grid(void);
 static void draw_menu_list_icons(void);
+static void draw_menu_desktop_icons(const char *const items[], int count);
 
 static void draw_menu_list(void) {
     const char *items[K85_MENU_ITEM_COUNT];
@@ -227,6 +230,12 @@ static void draw_menu_list(void) {
 }
 
 void k85_menu_draw(void) {
+    if (g_config.desktop_mode) {
+        const char *items[K85_MENU_ITEM_COUNT];
+        int count = get_filtered_menu(items, K85_MENU_ITEM_COUNT);
+        draw_menu_desktop_icons(items, count);
+        return;
+    }
     switch (g_config.menu_ui_style) {
         case 1: draw_menu_grid(); break;
         case 2: draw_menu_list_icons(); break;
@@ -587,6 +596,199 @@ static void run_action(int index) {
         k85_run_settings_menu();
     } else {
         if (!strcmp(item, "Interpreter")) { k85_run_json_interpreter(); } else { run_placeholder(item); }
+    }
+}
+
+// ---------- Desktop / OS режим: рабочий стол с иконками, таскбар снизу, курсор ----------
+#define K85_DESKTOP_TASKBAR_H 14
+#define K85_DESKTOP_HOVER_DWELL_MS 120
+
+static int s_desktop_pending_hover = -1;
+static int64_t s_desktop_pending_hover_since = 0;
+
+static void draw_desktop_taskbar(void) {
+    int w = M5.Display.width();
+    int h = M5.Display.height();
+    uint32_t bar_bg = 0x1A1A2E;
+    uint32_t fg = 0xFFFFFF;
+
+    M5.Display.fillRect(0, h - K85_DESKTOP_TASKBAR_H, w, K85_DESKTOP_TASKBAR_H, bar_bg);
+    M5.Display.drawFastHLine(0, h - K85_DESKTOP_TASKBAR_H, w, 0x444466);
+
+    M5.Display.setTextSize(1);
+    M5.Display.setTextColor(fg, bar_bg);
+    M5.Display.setCursor(4, h - K85_DESKTOP_TASKBAR_H + 3);
+    M5.Display.print("k85OS");
+
+    char right[64];
+    int batt = k85_get_battery();
+    if (batt >= 0) {
+        snprintf(right, sizeof(right), "%s  WiFi:%s  %d%%",
+                 k85_get_time_str(), k85_wifi_is_connected() ? "On" : "Off", batt);
+    } else {
+        snprintf(right, sizeof(right), "%s  WiFi:%s",
+                 k85_get_time_str(), k85_wifi_is_connected() ? "On" : "Off");
+    }
+    int tw = (int)strlen(right) * 6;
+    int tx = w - tw - 4;
+    if (tx < 60) tx = 60;
+    M5.Display.setCursor(tx, h - K85_DESKTOP_TASKBAR_H + 3);
+    M5.Display.print(right);
+}
+
+static void draw_menu_desktop_icons(const char *const items[], int count) {
+    uint32_t bg = k85_get_bg();
+    uint32_t fg = k85_get_fg();
+    uint32_t accent = k85_get_accent();
+    int w = M5.Display.width();
+    int h = M5.Display.height();
+
+    draw_menu_background(bg, accent);
+
+    if (count == 0) {
+        M5.Display.setTextSize(2);
+        M5.Display.setTextColor(fg, bg);
+        M5.Display.setCursor(10, h / 2 - 8);
+        M5.Display.print("No items");
+        draw_desktop_taskbar();
+        return;
+    }
+    if (s_selected >= count) s_selected = count - 1;
+    if (s_selected < 0) s_selected = 0;
+
+    const int cols = 4;
+    const int rows = 2;
+    const int per_page = cols * rows;
+    const int start_y = 16;
+    int grid_h = h - start_y - K85_DESKTOP_TASKBAR_H;
+    if (grid_h < 20) grid_h = 20;
+    int cell_w = w / cols;
+    int cell_h = grid_h / rows;
+
+    int page = s_selected / per_page;
+    int page_count = (count + per_page - 1) / per_page;
+    int page_start = page * per_page;
+    int page_end = page_start + per_page;
+    if (page_end > count) page_end = count;
+
+    for (int i = page_start; i < page_end; i++) {
+        int local = i - page_start;
+        int col = local % cols;
+        int row = local / cols;
+        int cx = col * cell_w + cell_w / 2;
+        int cy = start_y + row * cell_h + cell_h / 2 - 6;
+
+        bool sel = (i == s_selected);
+        if (sel) {
+            M5.Display.fillRoundRect(col * cell_w + 3, start_y + row * cell_h + 2,
+                                      cell_w - 6, cell_h - 4, 6, accent);
+        }
+        draw_menu_icon(cx, cy, 12, items[i], sel ? 0x000000 : fg);
+
+        M5.Display.setTextSize(1);
+        M5.Display.setTextColor(sel ? 0x000000 : fg, sel ? accent : bg);
+        char short_label[16];
+        int max_chars = (cell_w - 4) / 6;
+        if (max_chars > 15) max_chars = 15;
+        if (max_chars < 1) max_chars = 1;
+        snprintf(short_label, sizeof(short_label), "%.*s", max_chars, items[i]);
+        int tx = col * cell_w + (cell_w - (int)strlen(short_label) * 6) / 2;
+        if (tx < col * cell_w) tx = col * cell_w + 1;
+        M5.Display.setCursor(tx, start_y + row * cell_h + cell_h - 12);
+        M5.Display.print(short_label);
+    }
+
+    if (page_count > 1) {
+        M5.Display.setTextColor(0xAAAAAA, bg);
+        char pg[32];
+        snprintf(pg, sizeof(pg), "%d/%d", page + 1, page_count);
+        M5.Display.setCursor(w - (int)strlen(pg) * 6 - 4, start_y + grid_h - 10);
+        M5.Display.print(pg);
+    }
+
+    draw_desktop_taskbar();
+}
+
+static int desktop_hit_test(int count) {
+    int w = M5.Display.width();
+    int h = M5.Display.height();
+    const int cols = 4;
+    const int rows = 2;
+    const int per_page = cols * rows;
+    const int start_y = 16;
+    int grid_h = h - start_y - K85_DESKTOP_TASKBAR_H;
+    if (grid_h < 20) grid_h = 20;
+    int cell_w = w / cols;
+    int cell_h = grid_h / rows;
+
+    int page = s_selected / per_page;
+    int page_start = page * per_page;
+    int page_end = page_start + per_page;
+    if (page_end > count) page_end = count;
+
+    int cx = k85_cursor_x();
+    int cy = k85_cursor_y();
+    if (cx < 0 || cx >= w) return -1;
+    if (cy < start_y || cy >= start_y + grid_h) return -1;
+
+    int col = cx / cell_w;
+    int row = (cy - start_y) / cell_h;
+    if (col < 0 || col >= cols || row < 0 || row >= rows) return -1;
+
+    int idx = page_start + row * cols + col;
+    if (idx < page_start || idx >= page_end) return -1;
+    return idx;
+}
+
+#define K85_DESKTOP_EDGE_COOLDOWN_MS 400
+static int64_t s_desktop_edge_last_us = 0;
+
+void k85_menu_desktop_tick(void) {
+    k85_cursor_update();
+
+    const char *items[K85_MENU_ITEM_COUNT];
+    int count = get_filtered_menu(items, K85_MENU_ITEM_COUNT);
+
+    if (count > 0) {
+        int hover = desktop_hit_test(count);
+        int64_t now = esp_timer_get_time();
+        if (hover >= 0) {
+            if (hover != s_desktop_pending_hover) {
+                s_desktop_pending_hover = hover;
+                s_desktop_pending_hover_since = now;
+            } else if ((now - s_desktop_pending_hover_since) >= K85_DESKTOP_HOVER_DWELL_MS * 1000) {
+                s_selected = hover;
+            }
+        } else {
+            s_desktop_pending_hover = -1;
+            // Курсор ушёл за пределы сетки текущей страницы - переключаем
+            // страницу ему навстречу (иначе до пунктов на след. странице
+            // курсором вообще не добраться).
+            if ((now - s_desktop_edge_last_us) >= K85_DESKTOP_EDGE_COOLDOWN_MS * 1000) {
+                const int cols = 4, rows = 2, per_page = cols * rows;
+                const int start_y = 16;
+                int h = M5.Display.height();
+                int grid_h = h - start_y - K85_DESKTOP_TASKBAR_H;
+                int page_count = (count + per_page - 1) / per_page;
+                int cur_page = s_selected / per_page;
+                int cy = k85_cursor_y();
+                if (cy >= start_y + grid_h && cur_page < page_count - 1) {
+                    s_selected = (cur_page + 1) * per_page;
+                    s_desktop_edge_last_us = now;
+                } else if (cy < start_y && cur_page > 0) {
+                    s_selected = (cur_page - 1) * per_page;
+                    s_desktop_edge_last_us = now;
+                }
+            }
+        }
+    }
+
+    draw_menu_desktop_icons(items, count);
+    k85_cursor_draw();
+
+    if (count > 0 && k85_btn_a_pressed()) {
+        k85_wake_screen();
+        run_action(s_selected);
     }
 }
 

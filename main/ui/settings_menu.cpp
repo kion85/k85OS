@@ -22,6 +22,8 @@
 #include "cpu_freq.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "../core/cursor.h"
+#include "esp_timer.h"
 
 #include "M5Unified.h"
 #include "freertos/FreeRTOS.h"
@@ -32,13 +34,13 @@
 #include <cstring>
 #include <cmath>
 
-#define K85_SETTINGS_ITEM_COUNT 20
+#define K85_SETTINGS_ITEM_COUNT 22
 #define K85_SETTINGS_BACK_IDX   (K85_SETTINGS_ITEM_COUNT - 1)
 
 static const char *k85_settings_labels[K85_SETTINGS_ITEM_COUNT] = {
     "Theme", "Brightness", "Battery mode", "Boot style",
     "Device name", "Sound volume", "WiFi", "Reset steps",
-    "Check for updates", "Screen lock", "Status bar", "BG gradient", "Lock screen", "SSH Server", "Menu UI style", "CPU freq", "Power", "Font", "Keyboard nav", "Back",
+    "Check for updates", "Screen lock", "Status bar", "BG gradient", "Lock screen", "SSH Server", "Menu UI style", "CPU freq", "Power", "Font", "Keyboard nav", "Cursor", "Desktop", "Back",
 };
 
 static int s_selected = 0;
@@ -93,7 +95,15 @@ static void settings_value_str(char *out, size_t out_size, int idx) {
         case 16: out[0] = 0; break; // Power (подменю, значение не показываем)
         case 17: snprintf(out, out_size, "%s", k85_font_names[g_config.font_idx >= 0 && g_config.font_idx < K85_FONT_COUNT ? g_config.font_idx : 0]); break;
         case 18: snprintf(out, out_size, "%s", g_config.kbd_nav_mode == 1 ? "IMU (tilt)" : "Classic"); break;
-        case 19: out[0] = 0; break; // Back
+        case 19: {
+            static const char *cursor_names[4] = {"Off", "Receiving", "Sending", "IMU"};
+            int c = g_config.cursor_mode;
+            if (c < 0 || c > 3) c = 0;
+            snprintf(out, out_size, "%s", cursor_names[c]);
+            break;
+        }
+        case 20: snprintf(out, out_size, "%s", g_config.desktop_mode ? "OS" : "Firmware"); break;
+        case 21: out[0] = 0; break; // Back
         default: out[0] = 0;
     }
 }
@@ -184,6 +194,12 @@ static void draw_settings_icon(int cx, int cy, int r, const char *name, uint32_t
         d.drawRoundRect(cx - r, cy - r/2, r * 2, r, r/6, col);
         d.drawFastHLine(cx - r + 3, cy - r/6, r * 2 - 6, col);
         d.drawFastHLine(cx - r + 3, cy + r/6, r * 2 - 6, col);
+    } else if (!strcmp(name, "Cursor")) {
+        d.fillTriangle(cx - r/2, cy - r/2, cx - r/2, cy + r/3, cx - r/6, cy + r/6, col);
+        d.fillTriangle(cx - r/2, cy + r/3, cx - r/6, cy + r/6, cx, cy + r/2, col);
+    } else if (!strcmp(name, "Desktop")) {
+        d.drawRect(cx - r, cy - r/2, r * 2, r * 2 / 3, col);
+        d.drawFastHLine(cx - r/3, cy + r/2, r * 2 / 3, col);
     } else if (!strcmp(name, "Back")) {
         d.drawLine(cx + r/2, cy - r/2, cx - r/2, cy, col);
         d.drawLine(cx - r/2, cy, cx + r/2, cy + r/2, col);
@@ -610,16 +626,80 @@ static void settings_apply_item(int idx) {
         case 18:
             g_config.kbd_nav_mode = (g_config.kbd_nav_mode == 0) ? 1 : 0;
             break;
+        case 19:
+            g_config.cursor_mode = (g_config.cursor_mode + 1) % 4;
+            break;
+        case 20:
+            g_config.desktop_mode = !g_config.desktop_mode;
+            break;
         default:
             break;
     }
     k85_config_save();
 }
 
+#define K85_SETTINGS_HOVER_DWELL_MS 120
+
+// Хит-тест под реальную геометрию каждого из 3 стилей отрисовки Settings
+// (см. settings_draw_plain/settings_draw_grid/settings_draw_list_icons).
+static int settings_hit_test(void) {
+    int style = g_config.menu_ui_style;
+    int w = M5.Display.width();
+    int h = M5.Display.height();
+    int cx = k85_cursor_x();
+    int cy = k85_cursor_y();
+
+    if (style == 1) {
+        const int cols = 4, rows = 2, per_page = cols * rows;
+        const int start_y = 18;
+        int grid_h = h - start_y - 12;
+        int cell_w = w / cols;
+        int cell_h = grid_h / rows;
+        if (cy < start_y || cy >= start_y + grid_h) return -1;
+        int col = cx / cell_w;
+        int row = (cy - start_y) / cell_h;
+        if (col < 0 || col >= cols || row < 0 || row >= rows) return -1;
+        int page = s_selected / per_page;
+        int page_start = page * per_page;
+        int idx = page_start + row * cols + col;
+        if (idx >= K85_SETTINGS_ITEM_COUNT) return -1;
+        return idx;
+    } else if (style == 2) {
+        const int visible_rows = 5;
+        const int line_h = 20;
+        const int start_y = 20;
+        settings_clamp_scroll(visible_rows);
+        if (cy < start_y) return -1;
+        int local = (cy - start_y) / line_h;
+        if (local < 0 || local >= visible_rows) return -1;
+        int idx = s_scroll_top + local;
+        if (idx >= K85_SETTINGS_ITEM_COUNT) return -1;
+        return idx;
+    } else {
+        settings_clamp_scroll(K85_SETTINGS_VISIBLE_ROWS);
+        const int start_y = 20;
+        const int line_h = 14;
+        if (cy < start_y) return -1;
+        int local = (cy - start_y) / line_h;
+        if (local < 0 || local >= K85_SETTINGS_VISIBLE_ROWS) return -1;
+        int idx = s_scroll_top + local;
+        if (idx >= K85_SETTINGS_ITEM_COUNT) return -1;
+        return idx;
+    }
+}
+
 void k85_run_settings_menu(void) {
     s_selected = 0;
     s_scroll_top = 0;
     settings_draw();
+
+    bool cursor_mode = k85_cursor_active();
+    if (cursor_mode) k85_cursor_reset();
+    int pending_hover = -1;
+    int64_t pending_hover_since = 0;
+    int64_t edge_last_us = 0;
+    #define K85_SETTINGS_EDGE_COOLDOWN_MS 250
+
     while (true) {
         k85_input_update();
 
@@ -627,6 +707,57 @@ void k85_run_settings_menu(void) {
             k85_wait_ab_release();
             k85_config_save();
             return;
+        }
+
+        if (cursor_mode) {
+            k85_cursor_update();
+            int hover = settings_hit_test();
+            int64_t now = esp_timer_get_time();
+            if (hover >= 0) {
+                if (hover != pending_hover) {
+                    pending_hover = hover;
+                    pending_hover_since = now;
+                } else if ((now - pending_hover_since) >= K85_SETTINGS_HOVER_DWELL_MS * 1000) {
+                    s_selected = hover;
+                }
+            } else {
+                pending_hover = -1;
+                // Курсор ушёл за пределы видимого окна списка - докручиваем
+                // список ему навстречу (grid не скроллится построчно - пропускаем).
+                int style = g_config.menu_ui_style;
+                if (style != 1 && (now - edge_last_us) >= K85_SETTINGS_EDGE_COOLDOWN_MS * 1000) {
+                    int start_y = 20;
+                    int visible_rows = (style == 2) ? 5 : K85_SETTINGS_VISIBLE_ROWS;
+                    int line_h = (style == 2) ? 20 : 14;
+                    int cy = k85_cursor_y();
+                    int list_bottom = start_y + visible_rows * line_h;
+                    if (cy >= list_bottom && s_scroll_top < K85_SETTINGS_ITEM_COUNT - visible_rows) {
+                        s_scroll_top++;
+                        s_selected = s_scroll_top + visible_rows - 1;
+                        edge_last_us = now;
+                    } else if (cy < start_y && s_scroll_top > 0) {
+                        s_scroll_top--;
+                        s_selected = s_scroll_top;
+                        edge_last_us = now;
+                    }
+                }
+            }
+            settings_draw();
+            k85_cursor_draw();
+
+            if (k85_btn_a_pressed()) {
+                k85_wake_screen();
+                if (s_selected == K85_SETTINGS_BACK_IDX) {
+                    k85_config_save();
+                    return;
+                }
+                settings_apply_item(s_selected);
+                settings_draw();
+                k85_cursor_draw();
+            }
+
+            vTaskDelay(pdMS_TO_TICKS(30));
+            continue;
         }
 
         if (k85_btn_a_pressed()) {

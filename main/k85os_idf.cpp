@@ -142,7 +142,7 @@ extern "C" void app_main(void) {
         k85_step_counter_update();
 
         int64_t now_sb_us = esp_timer_get_time();
-        if (now_sb_us - last_sb_refresh_us > 1000000) { // раз в секунду
+        if (!g_config.desktop_mode && now_sb_us - last_sb_refresh_us > 1000000) { // раз в секунду
             k85_status_bar_draw();
             last_sb_refresh_us = now_sb_us;
         }
@@ -151,6 +151,12 @@ extern "C" void app_main(void) {
             k85_lock_screen_loop();
             k85_menu_draw();
             k85_btn_resync();
+            continue;
+        }
+
+        if (g_config.desktop_mode) {
+            k85_menu_desktop_tick();
+            vTaskDelay(pdMS_TO_TICKS(30));
             continue;
         }
 

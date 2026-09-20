@@ -75,6 +75,7 @@ static volatile bool s_scan_ready = false;
 static char s_scan_result[1024] = "[]";
 
 static volatile bool s_ws_task_running = false;
+static volatile bool s_ws_task_finished = true;
 static TaskHandle_t s_ws_task_handle = nullptr;
 
 static int16_t s_audio_buf[2][K85_WR_AUDIO_BUF_SAMPLES];
@@ -223,6 +224,7 @@ static void do_scan_internal(char *json_out, size_t json_out_size) {
 }
 
 static bool start_ws_background_task(void) {
+    s_ws_task_finished = false;
     if (!s_wr_task_stack) {
         s_wr_task_stack = (StackType_t *)heap_caps_malloc(K85_WR_TASK_STACK_BYTES, MALLOC_CAP_SPIRAM);
         if (!s_wr_task_stack) {
@@ -288,6 +290,7 @@ static void ws_background_task(void *arg) {
 
         vTaskDelay(pdMS_TO_TICKS(15));
     }
+    s_ws_task_finished = true;
     vTaskDelete(nullptr);
 }
 
@@ -748,7 +751,12 @@ void k85_run_web_radio(void) {
     close(listen_fd);
 
     s_ws_task_running = false;
-    vTaskDelay(pdMS_TO_TICKS(100));
+    {
+        int64_t stop_wait_start = esp_timer_get_time();
+        while (!s_ws_task_finished && (esp_timer_get_time() - stop_wait_start) < 3000000) {
+            vTaskDelay(pdMS_TO_TICKS(20));
+        }
+    }
     if (s_ws) { esp_websocket_client_stop(s_ws); esp_websocket_client_destroy(s_ws); s_ws = nullptr; }
 
     M5.Speaker.setVolume(wr_saved_volume);

@@ -2,6 +2,7 @@
 #include "common.h"
 #include "theme.h"
 #include "battery.h"
+#include "power.h"
 #include "sound.h"
 #include "input.h"
 #include "config.h"
@@ -12,6 +13,7 @@
 #include "../core/boot_screen.h"
 #include "../core/version.h"
 #include "../net/app_repo.h"
+#include "../core/cursor.h"
 
 #include "M5Unified.h"
 #include "esp_heap_caps.h"
@@ -21,6 +23,7 @@
 #include "esp_littlefs.h"
 #include "esp_ota_ops.h"
 #include "esp_wifi.h"
+#include "esp_timer.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -804,11 +807,54 @@ static void bios_apply(int idx) {
     }
 }
 
+#define K85_BIOS_HOVER_DWELL_MS 120
+
+// Хит-тест под реальную геометрию bios_draw_list()/bios_draw_grid().
+static int bios_hit_test(void) {
+    int style = g_config.bios_ui_style;
+    int w = M5.Display.width();
+    int h = M5.Display.height();
+    int cx = k85_cursor_x();
+    int cy = k85_cursor_y();
+
+    if (style == 1) {
+        const int cols = 4, rows = 2, per_page = cols * rows;
+        const int start_y = 18;
+        int grid_h = h - start_y - 12;
+        int cell_w = w / cols;
+        int cell_h = grid_h / rows;
+        if (cy < start_y || cy >= start_y + grid_h) return -1;
+        int col = cx / cell_w;
+        int row = (cy - start_y) / cell_h;
+        if (col < 0 || col >= cols || row < 0 || row >= rows) return -1;
+        int page = s_selected / per_page;
+        int page_start = page * per_page;
+        int idx = page_start + row * cols + col;
+        if (idx >= K85_BIOS_ITEM_COUNT) return -1;
+        return idx;
+    } else {
+        bios_clamp_scroll();
+        const int start_y = 22;
+        const int line_h = 14;
+        if (cy < start_y) return -1;
+        int local = (cy - start_y) / line_h;
+        if (local < 0 || local >= K85_BIOS_VISIBLE_ROWS) return -1;
+        int idx = s_scroll_top + local;
+        if (idx >= K85_BIOS_ITEM_COUNT) return -1;
+        return idx;
+    }
+}
+
 void k85_run_bios_menu(void) {
     s_selected = 0;
     s_scroll_top = 0;
     s_bios_theme = k85_bios_theme_load();
     bios_draw();
+
+    bool cursor_mode = k85_cursor_active();
+    if (cursor_mode) k85_cursor_reset();
+    int pending_hover = -1;
+    int64_t pending_hover_since = 0;
 
     while (true) {
         k85_input_update();
@@ -817,6 +863,35 @@ void k85_run_bios_menu(void) {
             k85_wait_ab_release();
             return;
         }
+
+        if (cursor_mode) {
+            k85_cursor_update();
+            int hover = bios_hit_test();
+            if (hover >= 0) {
+                int64_t now = esp_timer_get_time();
+                if (hover != pending_hover) {
+                    pending_hover = hover;
+                    pending_hover_since = now;
+                } else if ((now - pending_hover_since) >= K85_BIOS_HOVER_DWELL_MS * 1000) {
+                    s_selected = hover;
+                }
+            } else {
+                pending_hover = -1;
+            }
+            bios_draw();
+            k85_cursor_draw();
+
+            if (k85_btn_a_pressed()) {
+                k85_wake_screen();
+                bios_apply(s_selected);
+                bios_draw();
+                k85_cursor_draw();
+            }
+
+            vTaskDelay(pdMS_TO_TICKS(30));
+            continue;
+        }
+
         if (k85_btn_a_pressed()) {
             s_selected = (s_selected + 1) % K85_BIOS_ITEM_COUNT;
             bios_draw();

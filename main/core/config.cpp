@@ -261,6 +261,8 @@ static cJSON *cfg_to_json(const k85_config_t *c) {
     cJSON_AddNumberToObject(root, "bootstyle_idx", c->bootstyle_idx);
     cJSON_AddNumberToObject(root, "kb_layout", c->kb_layout);
     cJSON_AddNumberToObject(root, "kbd_nav_mode", c->kbd_nav_mode);
+    cJSON_AddNumberToObject(root, "cursor_mode", c->cursor_mode);
+    cJSON_AddBoolToObject(root, "desktop_mode", c->desktop_mode);
     cJSON_AddNumberToObject(root, "sound_volume", c->sound_volume);
     cJSON_AddNumberToObject(root, "utc_offset", c->utc_offset);
     cJSON_AddBoolToObject(root, "ota_locked", c->ota_locked);
@@ -393,6 +395,8 @@ static void cfg_from_json(cJSON *root, k85_config_t *out) {
     GET_INT("bootstyle_idx", bootstyle_idx);
     GET_INT("kb_layout", kb_layout);
     GET_INT("kbd_nav_mode", kbd_nav_mode);
+    GET_INT("cursor_mode", cursor_mode);
+    { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "desktop_mode"); if (_x) out->desktop_mode = cJSON_IsTrue(_x); }
     GET_INT("sound_volume", sound_volume);
     GET_INT("utc_offset", utc_offset);
     { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "ota_locked"); if (_x) out->ota_locked = cJSON_IsTrue(_x); }

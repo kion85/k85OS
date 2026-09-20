@@ -5,6 +5,7 @@
 #include "power.h"
 #include "input.h"
 #include "config.h"
+#include "../core/cursor.h"
 #include "M5Unified.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -175,10 +176,128 @@ static void draw_list_grid(const char *title, const char *const items[], int cou
     k85_draw_battery_icon();
 }
 
+// ---------- Курсорный режим (Settings -> Cursor: IMU) ----------
+// Наклон наводит на пункт списка, A = левый клик (открыть), B = правый
+// клик (назад). Работает поверх всех трёх стилей отрисовки списка.
+static int hit_test_item(int style, int scroll, int grid_page_start, int count, int cx, int cy) {
+    int H = M5.Display.height();
+    int W = M5.Display.width();
+    if (style == 1) {
+        const int cols = 4;
+        const int rows = 2;
+        const int start_y = 16;
+        int grid_h = H - start_y - 10;
+        int cell_w = W / cols;
+        int cell_h = grid_h / rows;
+        if (cy < start_y || cy >= start_y + grid_h) return -1;
+        int col = cx / cell_w;
+        int row = (cy - start_y) / cell_h;
+        if (col < 0 || col >= cols || row < 0 || row >= rows) return -1;
+        int idx = grid_page_start + row * cols + col;
+        if (idx < 0 || idx >= count) return -1;
+        return idx;
+    }
+
+    int line_h = (style == 2) ? 22 : 24;
+    int start_y = 16;
+    if (cy < start_y) return -1;
+    int local = (cy - start_y) / line_h;
+    int idx = scroll + local;
+    if (idx < 0 || idx >= count) return -1;
+    return idx;
+}
+
+static int run_list_menu_cursor_mode(const char *title, const char *const items[], int count,
+                                      const char *const score_keys[], K85IconDrawFn icon_fn) {
+    uint32_t bg = k85_get_bg();
+    uint32_t fg = k85_get_fg();
+    uint32_t accent = k85_get_accent();
+    int H = M5.Display.height();
+    int style = g_config.menu_ui_style;
+
+    int sel = 0;
+    int scroll = 0;
+    k85_cursor_reset();
+
+    // Задержка фиксации наведения - иначе при быстром наклоне sel дёргается
+    // на каждый кадр и список судорожно скроллит ("листает очень быстро").
+    // Пункт становится выбранным только если курсор реально задержался на
+    // нём хотя бы K85_LISTMENU_HOVER_DWELL_MS, а не просто пролетел мимо.
+    #define K85_LISTMENU_HOVER_DWELL_MS 120
+    int pending_hover = -1;
+    int64_t pending_hover_since = 0;
+
+    while (true) {
+        k85_input_update();
+        if (k85_ab_held(500)) {
+            k85_wait_ab_release();
+            return -1;
+        }
+
+        k85_cursor_update();
+
+        if (sel >= count) sel = count - 1;
+        int line_h = (style == 2) ? 22 : 24;
+        int start_y = 16;
+        int visible = (H - start_y) / line_h;
+        if (visible < 1) visible = 1;
+
+        const int grid_per_page = 8;
+        int grid_page_start = (sel / grid_per_page) * grid_per_page;
+
+        int hover = hit_test_item(style, scroll, grid_page_start, count, k85_cursor_x(), k85_cursor_y());
+        if (hover >= 0) {
+            int64_t now = esp_timer_get_time();
+            if (hover != pending_hover) {
+                pending_hover = hover;
+                pending_hover_since = now;
+            } else if ((now - pending_hover_since) >= K85_LISTMENU_HOVER_DWELL_MS * 1000) {
+                sel = hover;
+                if (sel < scroll) scroll = sel;
+                else if (sel >= scroll + visible) scroll = sel - visible + 1;
+            }
+        } else {
+            pending_hover = -1;
+        }
+
+        switch (style) {
+            case 1:
+                draw_list_grid(title, items, count, score_keys, sel, bg, fg, accent, icon_fn);
+                break;
+            case 2:
+                draw_list_icons(title, items, count, score_keys, sel, scroll, bg, fg, accent, icon_fn);
+                break;
+            default:
+                draw_list_plain(title, items, count, score_keys, sel, scroll, bg, fg, accent);
+                break;
+        }
+        k85_cursor_draw();
+
+        if (k85_btn_a_pressed()) {
+            k85_wake_screen();
+            k85_log("list_menu CURSOR left-click: title=%s sel=%d item=%s", title, sel, items[sel]);
+            if (!strcmp(items[sel], "Back")) return -1;
+            return sel;
+        }
+        if (k85_btn_b_pressed()) {
+            k85_wake_screen();
+            k85_log("list_menu CURSOR right-click -> back: title=%s", title);
+            return -1;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(30));
+    }
+}
+
 int k85_run_list_menu(const char *title, const char *const items[], int count,
                        const char *const score_keys[], K85IconDrawFn icon_fn) {
     k85_log("list_menu ENTER: title=%s count=%d btnB_down=%d", title, count, (int)k85_btn_b_is_down());
     if (count <= 0) return -1;
+
+    if (k85_cursor_active()) {
+        return run_list_menu_cursor_mode(title, items, count, score_keys, icon_fn);
+    }
+
     int sel = 0;
     int scroll = 0;
     uint32_t bg = k85_get_bg();
@@ -192,6 +311,7 @@ int k85_run_list_menu(const char *title, const char *const items[], int count,
     // -1 так же, как при A+B или выборе "Back".
     bool b_tap_pending = false;
     int64_t b_tap_pending_since = 0;
+    int b_tap_pending_sel = 0;
     const int64_t double_tap_window_us = 350000;
 
     while (true) {
@@ -236,12 +356,13 @@ int k85_run_list_menu(const char *title, const char *const items[], int count,
                 }
                 b_tap_pending = true;
                 b_tap_pending_since = now;
+                b_tap_pending_sel = sel; // фиксируем выбор на момент тапа, не на момент активации
             }
             if (b_tap_pending && (esp_timer_get_time() - b_tap_pending_since) >= double_tap_window_us) {
                 b_tap_pending = false;
-                k85_log("list_menu B pressed: title=%s sel=%d item=%s", title, sel, items[sel]);
-                if (!strcmp(items[sel], "Back")) return -1;
-                return sel;
+                k85_log("list_menu B pressed: title=%s sel=%d item=%s", title, b_tap_pending_sel, items[b_tap_pending_sel]);
+                if (!strcmp(items[b_tap_pending_sel], "Back")) return -1;
+                return b_tap_pending_sel;
             }
             vTaskDelay(pdMS_TO_TICKS(30));
         }

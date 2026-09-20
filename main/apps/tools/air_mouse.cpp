@@ -26,9 +26,9 @@ void k85_run_air_mouse(void) {
     int cursor_x = W / 2;
     int cursor_y = H / 2;
 
-    auto draw_crosshair = [&](int x, int y, bool clicked) {
+    auto draw_crosshair = [&](int x, int y, bool left_clicked, bool right_clicked) {
         M5.Display.fillScreen(bg);
-        uint32_t col = clicked ? 0xFF0000 : 0x00FFFF;
+        uint32_t col = right_clicked ? 0xFFAA00 : (left_clicked ? 0xFF0000 : 0x00FFFF);
         M5.Display.drawLine(x - 8, y, x + 8, y, col);
         M5.Display.drawLine(x, y - 8, x, y + 8, col);
         M5.Display.fillCircle(x, y, 3, col);
@@ -39,11 +39,11 @@ void k85_run_air_mouse(void) {
         M5.Display.print("Air Mouse");
         M5.Display.setTextColor(0xAAAAAA, bg);
         M5.Display.setCursor(4, H - 12);
-        M5.Display.print("tilt=move A=click A+B=exit");
+        M5.Display.print("tilt=move A=left B=right hold A+B=exit");
         k85_draw_battery_icon();
     };
 
-    draw_crosshair(cursor_x, cursor_y, false);
+    draw_crosshair(cursor_x, cursor_y, false, false);
     while (true) {
         k85_input_update();
         if (k85_ab_held(500)) {
@@ -60,13 +60,19 @@ void k85_run_air_mouse(void) {
         if (cursor_y < 2) cursor_y = 2;
         if (cursor_y > H - 2) cursor_y = H - 2;
 
-        bool clicked = false;
+        bool left_clicked = false;
+        bool right_clicked = false;
         if (k85_btn_a_pressed()) {
             k85_wake_screen();
-            clicked = true;
+            left_clicked = true;
             k85_play_tone(800, 60);
         }
-        draw_crosshair(cursor_x, cursor_y, clicked);
+        if (k85_btn_b_pressed()) {
+            k85_wake_screen();
+            right_clicked = true;
+            k85_play_tone(500, 60);
+        }
+        draw_crosshair(cursor_x, cursor_y, left_clicked, right_clicked);
         vTaskDelay(pdMS_TO_TICKS(40));
     }
 }
