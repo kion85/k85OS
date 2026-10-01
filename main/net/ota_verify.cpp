@@ -71,3 +71,8 @@ bool k85_ota_verify_signature_hex(const uint8_t *data, size_t data_len, const ch
 
     return k85_ota_verify_signature(data, data_len, signature);
 }
+
+// Exposes the trusted public key for the BIOS Signature info screen.
+void k85_ota_get_public_key(uint8_t out[32]) {
+    for (size_t i = 0; i < 32; i++) out[i] = K85_OTA_PUBLIC_KEY[i];
+}

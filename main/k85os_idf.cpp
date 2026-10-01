@@ -2,6 +2,7 @@
 // Слой 4: core/rtc_ntp + steps/step_counter + core/device + system/system_info + system/logs_screen
 
 #include "M5Unified.h"
+#include "core/script_engine.h"
 #include "core/config.h"
 #include "core/setup_wizard.h"
 #include "core/cpu_freq.h"
@@ -136,6 +137,9 @@ extern "C" void app_main(void) {
     k85_menu_draw();
 
     int64_t last_sb_refresh_us = 0;
+
+    // startup.sh, cron, FTP autostart (background task)
+    k85_automation_boot();
 
     while (true) {
         k85_input_update();

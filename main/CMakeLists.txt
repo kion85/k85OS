@@ -70,6 +70,9 @@
          "core/shell_commands.cpp"
          "core/heavy_lock.cpp"
          "apps/k85os_menu.cpp"
+         "apps/bios_extras.cpp"
+         "apps/bios_diag.cpp"
+         "apps/bios_password.cpp"
          "apps/test_mode.cpp"
          "net/ota.cpp"
          "apps/games/snake.cpp"
@@ -78,6 +81,8 @@
          "apps/games/race.cpp"
          "apps/games/reaction.cpp"
          "apps/games/flappy.cpp"
+         "apps/games/pong.cpp"
+         "apps/games/memory_match.cpp"
          "ble_hid/hid_dev.c"
          "ble_hid/hid_device_le_prf.c"
          "ble_hid/esp_hidd_prf_api.c"
@@ -97,9 +102,15 @@
          "apps/tools/mqtt_tool.cpp"
          "apps/tools/disk_cleanup.cpp"
          "apps/tools/services.cpp"
+         "apps/tools/package_manager.cpp"
+         "apps/tools/ftp_tool.cpp"
          "net/ota_verify.cpp"
+	 "net/ftp_server.cpp"
+	 "core/svc_cfg.cpp"
+	 "core/script_engine.cpp"
+	 "core/cron.cpp"
     INCLUDE_DIRS "." "core" "ui" "steps" "system" "net" "apps" "apps/games" "apps/tools" "ble_hid"
-    PRIV_REQUIRES json esp_netif esp_driver_tsens esp_wifi nvs_flash esp_event esp_driver_i2c esp_driver_gpio bt esp_driver_rmt esp_https_ota esp_http_client app_update mbedtls esp-libhelix-mp3 mbedtls wolfssl wolfssh esp_psram esp_websocket_client mqtt mdns
+    PRIV_REQUIRES bootloader_support efuse json esp_netif esp_driver_tsens esp_wifi nvs_flash esp_event esp_driver_i2c esp_driver_gpio bt esp_driver_rmt esp_https_ota esp_http_client app_update mbedtls esp-libhelix-mp3 mbedtls wolfssl wolfssh esp_psram esp_websocket_client mqtt mdns
 )
 
 # Форсируем линкер считать XMALLOC/XFREE/XREALLOC нужными символами с самого

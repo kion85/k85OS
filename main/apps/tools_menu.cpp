@@ -33,6 +33,8 @@
 #include "../net/kiwisdr_client.h"
 #include "tools/disk_cleanup.h"
 #include "tools/services.h"
+#include "tools/package_manager.h"
+#include "tools/ftp_tool.h"
 #include "M5Unified.h"
 #include <cstring>
 #include <cmath>
@@ -40,7 +42,7 @@
 static const char *TOOLS_ITEMS[] = {
     "WiFi Manager", "Color Test", "Bluetooth Scan", "I2C Scanner",
     "GPIO Control", "Files", "Music Player", "Melodies", "Mic Test",
-    "Air Mouse (screen)", "Air Mouse BLE", "WiFi Hotspot", "Calculator", "Terminal", "IR Remote", "SSH Connect", "Task Manager", "LoRa", "Internet SDR", "Web Radio", "Web Terminal", "Level", "Ping", "Authenticator", "Password Manager", "Orientation", "MQTT", "Disk Cleanup", "Services", "Back"
+    "Air Mouse (screen)", "Air Mouse BLE", "WiFi Hotspot", "Calculator", "Terminal", "IR Remote", "SSH Connect", "Task Manager", "LoRa", "Internet SDR", "Web Radio", "Web Terminal", "Level", "Ping", "Authenticator", "Password Manager", "Orientation", "MQTT", "Disk Cleanup", "Services", "Package Manager", "FTP Server", "Back"
 };
 #define TOOLS_COUNT (int)(sizeof(TOOLS_ITEMS) / sizeof(TOOLS_ITEMS[0]))
 
@@ -179,6 +181,18 @@ static void draw_tools_icon(int cx, int cy, int r, const char *name, uint32_t co
         d.fillCircle(cx, cy, r/3, col);
         d.drawArc(cx, cy, r/2, r/2 + 2, 200, 340, col);
         d.drawArc(cx, cy, r, r + 2, 200, 340, col);
+    } else if (!strcmp(name, "Package Manager")) {
+        d.drawRoundRect(cx - r, cy - r/2, r * 2, r, r/6, col);
+        d.fillTriangle(cx - r/3, cy - r/6, cx + r/3, cy - r/6, cx, cy + r/4, col);
+    } else if (!strcmp(name, "FTP Server")) {
+        d.drawRect(cx - r, cy - r/3, r * 2, r, col);
+        d.fillRect(cx - r, cy - r/2, r * 2 / 3, r/6 + 1, col);
+        d.drawLine(cx - r/3, cy + r/2 - 2, cx - r/3, cy - r/6, col);
+        d.drawLine(cx - r/3, cy - r/6, cx - r/3 - r/6, cy, col);
+        d.drawLine(cx - r/3, cy - r/6, cx - r/3 + r/6, cy, col);
+        d.drawLine(cx + r/3, cy - r/6, cx + r/3, cy + r/2 - 2, col);
+        d.drawLine(cx + r/3, cy + r/2 - 2, cx + r/3 - r/6, cy + r/3, col);
+        d.drawLine(cx + r/3, cy + r/2 - 2, cx + r/3 + r/6, cy + r/3, col);
     } else if (!strcmp(name, "Back")) {
         d.drawLine(cx + r/2, cy - r/2, cx - r/2, cy, col);
         d.drawLine(cx - r/2, cy, cx + r/2, cy + r/2, col);
@@ -256,5 +270,7 @@ void k85_run_tools_menu(void) {
         else if (idx == 26) k85_run_mqtt_tool();
         else if (idx == 27) k85_run_disk_cleanup();
         else if (idx == 28) k85_run_services();
+        else if (idx == 29) k85_run_package_manager();
+        else if (idx == 30) k85_run_ftp_tool();
     }
 }

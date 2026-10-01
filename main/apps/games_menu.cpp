@@ -1,4 +1,4 @@
-#include "games_menu.h"
+﻿#include "games_menu.h"
 #include "list_menu.h"
 #include "games/snake.h"
 #include "games/tetris.h"
@@ -6,6 +6,8 @@
 #include "games/race.h"
 #include "games/reaction.h"
 #include "games/flappy.h"
+#include "games/pong.h"
+#include "games/memory_match.h"
 #include "../net/app_repo.h"
 #include "../net/firmware_flash.h"
 #include "../net/wifi.h"
@@ -20,10 +22,10 @@
 
 #include <cstring>
 
-#define K85_GAMES_ITEM_COUNT 8
+#define K85_GAMES_ITEM_COUNT 10
 
 static const char *k85_games_labels[K85_GAMES_ITEM_COUNT] = {
-    "Snake", "Tetris", "2048", "Race", "Reaction", "Flappy", "Download", "Back",
+    "Snake", "Tetris", "2048", "Race", "Reaction", "Flappy", "Pong", "Memory", "Download", "Back",
 };
 
 // Иконки для главного меню Games.
@@ -66,6 +68,16 @@ static void draw_games_icon(int cx, int cy, int r, const char *name, uint32_t co
         d.fillCircle(cx, cy, r/2, col);
         d.fillTriangle(cx - r/2, cy, cx - r, cy - r/4, cx - r, cy + r/4, col);
         d.fillCircle(cx + r/4, cy - r/4, 2, bg_col);
+    } else if (!strcmp(name, "Memory")) {
+        int s = r - 1;
+        d.drawRect(cx - r, cy - r, s, s, col);
+        d.fillRect(cx + 1, cy - r, s, s, col);
+        d.fillRect(cx - r, cy + 1, s, s, col);
+        d.drawRect(cx + 1, cy + 1, s, s, col);
+    } else if (!strcmp(name, "Pong")) {
+        d.drawFastVLine(cx - r + 1, cy - r/2, r, col);
+        d.drawFastVLine(cx + r - 1, cy - r/2, r, col);
+        d.fillCircle(cx, cy, 2, col);
     } else if (!strcmp(name, "Download")) {
         d.drawLine(cx, cy - r, cx, cy + r/3, col);
         d.fillTriangle(cx - r/3, cy, cx + r/3, cy, cx, cy + r/2, col);
@@ -137,7 +149,9 @@ void k85_run_games_menu(void) {
             case 3: k85_run_race(); break;
             case 4: k85_run_reaction(); break;
             case 5: k85_run_flappy(); break;
-            case 6: run_download_menu(); break;
+            case 6: k85_run_pong(); break;
+            case 7: k85_run_memory_match(); break;
+            case 8: run_download_menu(); break;
             default: break;
         }
     }

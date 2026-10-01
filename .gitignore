@@ -15,3 +15,5 @@ k85os_ota_private_key.pem
 
 *.pem
 *.sig
+
+/*.bin

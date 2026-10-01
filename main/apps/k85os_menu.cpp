@@ -1,4 +1,6 @@
 ﻿#include "k85os_menu.h"
+#include "bios_extras.h"
+#include "bios_password.h"
 #include "common.h"
 #include "theme.h"
 #include "battery.h"
@@ -10,6 +12,7 @@
 #include "list_menu.h"
 #include "../core/post_beep.h"
 #include "../core/bios_theme.h"
+#include "../core/cpu_freq.h"
 #include "../core/boot_screen.h"
 #include "../core/version.h"
 #include "../net/app_repo.h"
@@ -34,7 +37,7 @@
 
 using namespace k85;
 
-#define K85_BIOS_ITEM_COUNT 22
+#define K85_BIOS_ITEM_COUNT 24
 #define K85_BIOS_VISIBLE_ROWS 6
 
 static const char *k85_bios_labels[K85_BIOS_ITEM_COUNT] = {
@@ -44,7 +47,7 @@ static const char *k85_bios_labels[K85_BIOS_ITEM_COUNT] = {
     "Update UEFI theme", "Customization",
     "POST beep", "POST beep info", "Mute all sound", "GRUB menu", "Boot options",
     "Wipe WiFi networks", "Reset config", "Factory reset",
-    "Boot loader style", "Reboot",
+    "Boot loader style", "CPU frequency", "System tools", "Reboot",
 };
 
 static int s_selected = 0;
@@ -85,6 +88,7 @@ static void bios_value_str(char *out, size_t out_size, int idx) {
             snprintf(out, out_size, "%s", k85_boot_loader_style_names[s]);
             break;
         }
+        case 21: k85_cpu_freq_bios_label(out, out_size); break;
         default: out[0] = 0;
     }
 }
@@ -547,7 +551,22 @@ static void draw_bios_icon(int idx, int cx, int cy, int r, uint32_t col) {
             d.drawFastHLine(cx - r/2 + 1, cy, r - 2, col);
             d.fillTriangle(cx + r/2 - 2, cy - r/3 - 1, cx + r/2 + 2, cy - r/3 - 1, cx + r/2, cy - r/3 - 4, col);
             break;
-        case 21: // Reboot
+        case 21: // CPU frequency
+            d.drawRect(cx - r/2, cy - r/2, r, r, col);
+            d.drawRect(cx - r/4, cy - r/4, r/2, r/2, col);
+            d.drawFastVLine(cx - r/4, cy - r/2 - 2, 2, col);
+            d.drawFastVLine(cx + r/4, cy - r/2 - 2, 2, col);
+            d.drawFastVLine(cx - r/4, cy + r/2, 2, col);
+            d.drawFastVLine(cx + r/4, cy + r/2, 2, col);
+            break;
+        case 22: // System tools
+            d.drawCircle(cx, cy, r/2, col);
+            d.drawFastHLine(cx - r, cy, r/2, col);
+            d.drawFastHLine(cx + r/2, cy, r/2, col);
+            d.drawFastVLine(cx, cy - r, r/2, col);
+            d.drawFastVLine(cx, cy + r/2, r/2, col);
+            break;
+        case 23: // Reboot
             d.drawCircle(cx, cy, r/2, col);
             d.drawFastVLine(cx, cy - r/2 - 1, r/2, col);
             break;
@@ -797,7 +816,9 @@ static void bios_apply(int idx) {
             k85_boot_loader_style_cycle();
             k85_config_save();
             break;
-        case 21:
+        case 21: k85_cpu_freq_bios_cycle(); break;
+        case 22: k85_run_bios_extras(); break;
+        case 23:
             if (confirm_action("Reboot device")) {
                 esp_restart();
             }
@@ -846,6 +867,7 @@ static int bios_hit_test(void) {
 }
 
 void k85_run_bios_menu(void) {
+    if (!k85_bios_password_gate()) return;
     s_selected = 0;
     s_scroll_top = 0;
     s_bios_theme = k85_bios_theme_load();

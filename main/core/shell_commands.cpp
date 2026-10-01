@@ -1,10 +1,12 @@
-﻿#pragma GCC diagnostic push
+#pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat-truncation"
 
 #include "shell_commands.h"
 #include "config.h"
 #include "device.h"
 #include "battery.h"
+#include "fs_guard.h"
+#include "script_engine.h"
 
 #include "esp_chip_info.h"
 #include "esp_flash.h"
@@ -57,16 +59,12 @@ static void cmd_imu(char *out, size_t out_size) {
         ax, ay, az, gx, gy, gz);
 }
 
-// Чёрный список: SSH host-ключ и файл конфига (с WiFi-паролями/хешами)
-// никогда не должны отдаваться через shell-команды - иначе любой, кто
-// получил доступ к терминалу/SSH, может скачать их и получить MITM на
-// будущие SSH-сессии или все сохранённые пароли WiFi.
+// Чёрный список: SSH host-ключ, файл конфига (с WiFi-паролями/хешами) и
+// k85_svc.cfg (хеш FTP-пароля) никогда не должны отдаваться через
+// shell-команды - иначе любой, кто получил доступ к терминалу/SSH, может
+// скачать их. Список общий с FTP-сервером и лежит в core/fs_guard.h.
 static bool is_blocked_path(const char *path) {
-    static const char *blocked[] = { "k85_ssh_host_key", "k85os_config.json", "k85_ssh_" };
-    for (size_t i = 0; i < sizeof(blocked) / sizeof(blocked[0]); i++) {
-        if (strstr(path, blocked[i])) return true;
-    }
-    return false;
+    return k85_is_blocked_path(path);
 }
 
 static void cmd_ls(const char *arg, char *out, size_t out_size) {
@@ -155,6 +153,8 @@ void k85_shell_run_command(const char *cmd_full, char *out, size_t out_size) {
             "  info, free, uptime, battery, wifi, imu, ps\r\n"
             "  ls [dir], cat <file>\r\n"
             "  wifi-on, wifi-off, brightness <0-100>, volume <0-100>\r\n"
+            "  echo, set, alias, unalias, sleep <s>, sh <file>\r\n"
+            "  cron [on|off|reload|list], ftp [start|stop], ftppass <user> <pass>\r\n"
             "  reboot, exit\r\n");
     } else if (!strcmp(cmd, "ps") || !strcmp(cmd, "htop")) {
         cmd_ps(out, out_size);
@@ -208,6 +208,8 @@ void k85_shell_run_command(const char *cmd_full, char *out, size_t out_size) {
         snprintf(out, out_size, "Rebooting...\r\n");
     } else if (strlen(cmd) == 0) {
         out[0] = 0;
+    } else if (k85_ext_run_command(cmd, arg, out, out_size)) {
+        // обработано в script_engine: echo/set/alias/unalias/sleep/sh/cron/ftp/ftppass и пользовательские alias
     } else {
         snprintf(out, out_size, "Unknown command: %s (try 'help')\r\n", cmd);
     }

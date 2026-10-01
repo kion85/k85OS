@@ -42,6 +42,7 @@ typedef struct {
     int kbd_nav_mode; // 0=Classic (A/B buttons), 1=IMU (tilt navigation)
     int cursor_mode; // 0=Off, 1=Receiving (USB Host mouse), 2=Sending (USB Device HID), 3=IMU standalone
     bool desktop_mode; // false=Firmware (обычное меню), true=OS/Desktop (иконки+таскбар+курсор)
+    char alt_slot_name[64]; // имя последней игры/прошивки, зашитой в запасной OTA-слот (Package Manager)
     int sound_volume;
     int utc_offset; // -12..+12, часовой пояс относительно UTC
     bool ota_locked;   // true = блокирует OTA-обновления по воздуху

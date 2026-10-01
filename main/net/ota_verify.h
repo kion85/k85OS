@@ -9,3 +9,6 @@ bool k85_ota_verify_signature(const uint8_t *data, size_t data_len, const uint8_
 
 // То же самое, но подпись передана как hex-строка (128 символов = 64 байта).
 bool k85_ota_verify_signature_hex(const uint8_t *data, size_t data_len, const char *signature_hex);
+
+// Copies the trusted Ed25519 public key (32 bytes); used by the BIOS fingerprint screen.
+void k85_ota_get_public_key(uint8_t out[32]);
