@@ -1,4 +1,4 @@
-﻿## v7.5 - 2026-10-01
+﻿## v7.5 - 2026-10-02
 
 ### Package Manager (Tools -> Package Manager)
 
