@@ -17,3 +17,12 @@ k85os_ota_private_key.pem
 *.sig
 
 /*.bin
+
+release_out/
+voice.pak
+*.bak
+*.nosshbak
+*.sshbak
+*.qsbak
+*.ssbak
+*.fnbak
