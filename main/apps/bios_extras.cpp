@@ -4,6 +4,7 @@
 #include "bios_extras.h"
 #include "bios_diag.h"
 #include "bios_password.h"
+#include "bios_system.h"
 #include "common.h"
 #include "input.h"
 #include "config.h"
@@ -256,11 +257,11 @@ static void signature_info(void) {
 // ---------- entry ----------
 void k85_run_bios_extras(void) {
     static const char *items[] = {
-        "Hardware monitor", "Automation / safe", "Backup config", "Restore config", "Signature info", "Diagnostics", "Slots & partitions", "Security status", "BIOS password", "Back",
+        "Hardware monitor", "Automation / safe", "Backup config", "Restore config", "Signature info", "Diagnostics", "Slots & partitions", "Security status", "BIOS password", "Restore points", "Integrity check", "Back",
     };
     while (true) {
-        int idx = k85_run_list_menu("SYSTEM TOOLS", items, 10, nullptr);
-        if (idx < 0 || idx == 9) return;
+        int idx = k85_run_list_menu("SYSTEM TOOLS", items, 12, nullptr);
+        if (idx < 0 || idx == 11) return;
         if (idx == 0) hardware_monitor();
         else if (idx == 1) automation_menu();
         else if (idx == 2) backup_config();
@@ -270,6 +271,8 @@ void k85_run_bios_extras(void) {
         else if (idx == 6) k85_run_slots_menu();
         else if (idx == 7) k85_run_security_status();
         else if (idx == 8) k85_run_bios_password_menu();
+        else if (idx == 9) k85_run_restore_points();
+        else if (idx == 10) k85_run_integrity_check();
     }
 }
 

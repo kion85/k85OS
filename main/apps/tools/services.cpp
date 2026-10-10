@@ -16,23 +16,22 @@
 #include <cstdio>
 #include <cstring>
 
-#define K85_SVC_ITEM_COUNT 9
+#define K85_SVC_ITEM_COUNT 8
 
 static const char *k85_svc_labels[K85_SVC_ITEM_COUNT] = {
-    "SSH Server", "WiFi Hotspot autostart", "MQTT autostart", "OTA background check",
+    "WiFi Hotspot autostart", "MQTT autostart", "OTA background check",
     "FTP Server", "FTP autostart", "Startup script", "Scheduler (cron)", "Back",
 };
 
 static void svc_value_str(char *out, size_t out_size, int idx) {
     switch (idx) {
-        case 0: snprintf(out, out_size, "%s", g_config.ssh_enabled ? "ON" : "OFF"); break;
-        case 1: snprintf(out, out_size, "N/A"); break;
-        case 2: snprintf(out, out_size, "%s", g_config.mqtt_autostart ? "ON" : "OFF"); break;
-        case 3: snprintf(out, out_size, "%s", g_config.ota_bg_check_enabled ? "ON" : "OFF"); break;
-        case 4: snprintf(out, out_size, "%s", k85_ftp_server_is_running() ? "ON" : "OFF"); break;
-        case 5: snprintf(out, out_size, "%s", k85_svc_get_bool("ftp_auto", false) ? "ON" : "OFF"); break;
-        case 6: snprintf(out, out_size, "%s", k85_svc_get_bool("startup", true) ? "ON" : "OFF"); break;
-        case 7: snprintf(out, out_size, "%s", k85_cron_is_running() ? "ON" : "OFF"); break;
+        case 0: snprintf(out, out_size, "N/A"); break;
+        case 1: snprintf(out, out_size, "%s", g_config.mqtt_autostart ? "ON" : "OFF"); break;
+        case 2: snprintf(out, out_size, "%s", g_config.ota_bg_check_enabled ? "ON" : "OFF"); break;
+        case 3: snprintf(out, out_size, "%s", k85_ftp_server_is_running() ? "ON" : "OFF"); break;
+        case 4: snprintf(out, out_size, "%s", k85_svc_get_bool("ftp_auto", false) ? "ON" : "OFF"); break;
+        case 5: snprintf(out, out_size, "%s", k85_svc_get_bool("startup", true) ? "ON" : "OFF"); break;
+        case 6: snprintf(out, out_size, "%s", k85_cron_is_running() ? "ON" : "OFF"); break;
         default: out[0] = 0;
     }
 }
@@ -93,32 +92,24 @@ void k85_run_services(void) {
         if (idx < 0 || idx == K85_SVC_ITEM_COUNT - 1) return;
 
         if (idx == 0) {
-            if (g_config.ssh_enabled) {
-                g_config.ssh_enabled = false;
-                k85_ssh_server_stop();
-                k85_config_save();
-            } else {
-                show_and_wait("Set up SSH in BIOS\n(needs username/\npassword)\nA+B=back");
-            }
-        } else if (idx == 1) {
             show_and_wait("Hotspot autostart\nnot yet available\nA+B=back");
-        } else if (idx == 2) {
+        } else if (idx == 1) {
             g_config.mqtt_autostart = !g_config.mqtt_autostart;
             k85_config_save();
-        } else if (idx == 3) {
+        } else if (idx == 2) {
             g_config.ota_bg_check_enabled = !g_config.ota_bg_check_enabled;
             k85_config_save();
-        } else if (idx == 4) {
+        } else if (idx == 3) {
             toggle_ftp_server();
-        } else if (idx == 5) {
+        } else if (idx == 4) {
             bool now_on = !k85_svc_get_bool("ftp_auto", false);
             k85_svc_set_bool("ftp_auto", now_on);
             if (now_on && !k85_ftp_has_login()) {
                 show_and_wait("FTP login not set.\nIn Terminal run:\nftppass <user> <pass>\nA+B=back");
             }
-        } else if (idx == 6) {
+        } else if (idx == 5) {
             k85_svc_set_bool("startup", !k85_svc_get_bool("startup", true));
-        } else if (idx == 7) {
+        } else if (idx == 6) {
             if (k85_cron_is_running()) {
                 k85_svc_set_bool("cron", false);
                 k85_cron_stop();
@@ -129,3 +120,5 @@ void k85_run_services(void) {
         }
     }
 }
+
+// K85_SSH_REMOVED

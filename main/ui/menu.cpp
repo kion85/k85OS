@@ -1,4 +1,6 @@
-﻿#include "menu.h"
+#include "menu.h"
+#include "voice.h" // K85V:inc
+#include <cstdio>
 #include "common.h"
 #include "theme.h"
 #include "battery.h"
@@ -387,6 +389,7 @@ static void menu_move(int delta) {
     int count = get_filtered_menu(items, K85_MENU_ITEM_COUNT);
     if (count > 0) {
         s_selected = ((s_selected + delta) % count + count) % count;
+        k85_voice_say(items[s_selected]); // K85V:menu
     }
     k85_menu_draw();
 }

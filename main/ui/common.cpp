@@ -1,4 +1,6 @@
 #include "common.h"
+#include "voice.h" // K85V:inc
+#include <cstdio>
 #include "theme.h"
 #include "battery.h"
 #include "M5Unified.h"
@@ -6,6 +8,7 @@
 #include <cmath>
 
 void k85_show_message(const char *text) {
+k85_voice_say(text); // K85V:msg
     uint32_t bg = k85_get_bg();
     uint32_t fg = k85_get_fg();
     int newline_count = 0;

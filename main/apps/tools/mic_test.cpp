@@ -1,4 +1,4 @@
-﻿#include "mic_test.h"
+#include "mic_test.h"
 #include "theme.h"
 #include "power.h"
 #include "input.h"
@@ -11,6 +11,7 @@
 #include <cstdio>
 
 void k85_run_mic_test(void) {
+    M5.Speaker.end(); // K85V:mic - speaker and mic share one I2S
     M5.Mic.begin();
 
     int W = M5.Display.width();
@@ -31,6 +32,7 @@ void k85_run_mic_test(void) {
         if (k85_ab_held(500)) {
             k85_wait_ab_release();
             M5.Mic.end();
+            M5.Speaker.begin();
             return;
         }
 

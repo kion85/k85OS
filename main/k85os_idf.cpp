@@ -1,4 +1,4 @@
-﻿// k85OS v4.1 — порт на ESP-IDF C++
+// k85OS v4.1 — порт на ESP-IDF C++
 // Слой 4: core/rtc_ntp + steps/step_counter + core/device + system/system_info + system/logs_screen
 
 #include "M5Unified.h"
@@ -90,7 +90,6 @@ extern "C" void app_main(void) {
     }
     k85_cpu_freq_apply_saved();
 
-    k85_ssh_reserve_stack_early();
     k85_heavy_lock_init(); // резервируем стек под SSH-таск заранее, littlefs уже готов
     k85_rtc_ntp_init();
     k85_post_report_check(post_report, PostCode::RTC_TIME_FAIL, k85_rtc_is_present());
@@ -101,9 +100,6 @@ extern "C" void app_main(void) {
     k85_post_report_check(post_report, PostCode::WIFI_INIT, true);
 
     // Services: автозапуск при загрузке того, что пользователь включил.
-    if (g_config.ssh_enabled) {
-        k85_ssh_server_start();
-    }
     if (g_config.mqtt_autostart && g_config.mqtt_broker_uri[0]) {
         k85_mqtt_connect(g_config.mqtt_broker_uri, g_config.mqtt_client_id,
                           g_config.mqtt_username, g_config.mqtt_password);

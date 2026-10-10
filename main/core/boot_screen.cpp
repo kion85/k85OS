@@ -1,4 +1,4 @@
-﻿#include "boot_screen.h"
+#include "boot_screen.h"
 #include "config.h"
 #include "theme.h"
 #include "boot_theme.h"
@@ -17,7 +17,7 @@
 #include <cstring>
 #include <cmath>
 
-#define K85_FW_VERSION "7.5"
+#define K85_FW_VERSION "7.7"
 #define K85_BOOT_DURATION_MS 4000
 #define K85_BOOT_MENU_TIMEOUT_MS 3000
 

@@ -1,4 +1,6 @@
-﻿#include "list_menu.h"
+#include "list_menu.h"
+#include "voice.h" // K85V:inc
+#include <cstdio>
 #include "theme.h"
 #include "log.h"
 #include "battery.h"
@@ -313,6 +315,7 @@ int k85_run_list_menu(const char *title, const char *const items[], int count,
     int64_t b_tap_pending_since = 0;
     int b_tap_pending_sel = 0;
     const int64_t double_tap_window_us = 350000;
+    { char k85vb[96]; snprintf(k85vb, sizeof(k85vb), "%s %s", title, items[0]); k85_voice_say(k85vb); } // K85V:enter
 
     while (true) {
         if (sel >= count) sel = count - 1;
@@ -342,9 +345,11 @@ int k85_run_list_menu(const char *title, const char *const items[], int count,
                 k85_wait_ab_release();
                 return -1;
             }
+            if (k85_voice_take_notify()) { k85_voice_flash_ready(); break; }
             if (k85_btn_a_pressed()) {
                 k85_wake_screen();
                 sel = (sel + 1) % count;
+                k85_voice_say(items[sel]); // K85V:sel
                 break;
             }
             if (k85_btn_b_pressed()) {

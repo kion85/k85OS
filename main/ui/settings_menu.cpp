@@ -1,4 +1,4 @@
-﻿#include "settings_menu.h"
+#include "settings_menu.h"
 #include "config.h"
 #include "theme.h"
 #include "power.h"
@@ -34,13 +34,13 @@
 #include <cstring>
 #include <cmath>
 
-#define K85_SETTINGS_ITEM_COUNT 22
+#define K85_SETTINGS_ITEM_COUNT 21
 #define K85_SETTINGS_BACK_IDX   (K85_SETTINGS_ITEM_COUNT - 1)
 
 static const char *k85_settings_labels[K85_SETTINGS_ITEM_COUNT] = {
     "Theme", "Brightness", "Battery mode", "Boot style",
     "Device name", "Sound volume", "WiFi", "Reset steps",
-    "Check for updates", "Screen lock", "Status bar", "BG gradient", "Lock screen", "SSH Server", "Menu UI style", "CPU freq", "Power", "Font", "Keyboard nav", "Cursor", "Desktop", "Back",
+    "Check for updates", "Screen lock", "Status bar", "BG gradient", "Lock screen", "Menu UI style", "CPU freq", "Power", "Font", "Keyboard nav", "Cursor", "Desktop", "Back",
 };
 
 static int s_selected = 0;
@@ -78,32 +78,31 @@ static void settings_value_str(char *out, size_t out_size, int idx) {
         case 10: out[0] = 0; break;
         case 11: snprintf(out, out_size, "%s", g_config.bg_gradient_enabled ? "ON" : "OFF"); break;
         case 12: out[0] = 0; break;
-        case 13: snprintf(out, out_size, "%s", g_config.ssh_enabled ? "ON" : "OFF"); break;
-        case 14: {
+        case 13: {
             static const char *ui_style_names[3] = {"List", "Grid", "List+Icons"};
             int s = g_config.menu_ui_style;
             if (s < 0 || s > 2) s = 0;
             snprintf(out, out_size, "%s", ui_style_names[s]);
             break;
         }
-        case 15: {
+        case 14: {
             int mhz = g_config.cpu_freq_mhz;
             if (mhz != 240 && mhz != 160 && mhz != 80) mhz = 160;
             snprintf(out, out_size, "%d MHz", mhz);
             break;
         }
-        case 16: out[0] = 0; break; // Power (подменю, значение не показываем)
-        case 17: snprintf(out, out_size, "%s", k85_font_names[g_config.font_idx >= 0 && g_config.font_idx < K85_FONT_COUNT ? g_config.font_idx : 0]); break;
-        case 18: snprintf(out, out_size, "%s", g_config.kbd_nav_mode == 1 ? "IMU (tilt)" : "Classic"); break;
-        case 19: {
+        case 15: out[0] = 0; break; // Power (подменю, значение не показываем)
+        case 16: snprintf(out, out_size, "%s", k85_font_names[g_config.font_idx >= 0 && g_config.font_idx < K85_FONT_COUNT ? g_config.font_idx : 0]); break;
+        case 17: snprintf(out, out_size, "%s", g_config.kbd_nav_mode == 1 ? "IMU (tilt)" : "Classic"); break;
+        case 18: {
             static const char *cursor_names[4] = {"Off", "Receiving", "Sending", "IMU"};
             int c = g_config.cursor_mode;
             if (c < 0 || c > 3) c = 0;
             snprintf(out, out_size, "%s", cursor_names[c]);
             break;
         }
-        case 20: snprintf(out, out_size, "%s", g_config.desktop_mode ? "OS" : "Firmware"); break;
-        case 21: out[0] = 0; break; // Back
+        case 19: snprintf(out, out_size, "%s", g_config.desktop_mode ? "OS" : "Firmware"); break;
+        case 20: out[0] = 0; break; // Back
         default: out[0] = 0;
     }
 }
@@ -549,62 +548,10 @@ static void settings_apply_item(int idx) {
         case 12:
             k85_run_lock_screen_settings();
             break;
-        case 13: {
-            if (g_config.ssh_enabled) {
-                k85_show_message("Disable SSH server?\nB=confirm A+B=cancel");
-                bool confirmed = false;
-                while (true) {
-                    k85_input_update();
-                    if (k85_ab_held(500)) { k85_wait_ab_release(); goto ssh_done; }
-                    if (k85_btn_b_pressed()) { confirmed = true; break; }
-                    vTaskDelay(pdMS_TO_TICKS(30));
-                }
-                if (confirmed) {
-                    k85_ssh_server_stop();
-                    g_config.ssh_enabled = false;
-                    k85_show_message("SSH server disabled\nA+B=back");
-                    while (true) {
-                        k85_input_update();
-                        if (k85_ab_held(500)) { k85_wait_ab_release(); break; }
-                        vTaskDelay(pdMS_TO_TICKS(30));
-                    }
-                }
-            } else {
-                char user[32] = "";
-                if (!k85_text_input("SSH username:", g_config.ssh_username, user, sizeof(user)) || !user[0]) break;
-
-                char pass[64] = "";
-                if (!k85_text_input("SSH password:", "", pass, sizeof(pass)) || !pass[0]) break;
-
-                snprintf(g_config.ssh_username, sizeof(g_config.ssh_username), "%s", user);
-                k85_ssh_hash_password(pass, g_config.ssh_password_hash);
-                g_config.ssh_enabled = true;
-                k85_config_save();
-
-                ESP_LOGI("k85_settings", "internal free: %u, largest block: %u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
-                K85SshStartResult ssh_res = k85_ssh_server_start();
-                if (ssh_res == K85_SSH_START_OK) {
-                    k85_show_message("SSH server started\nA+B=back");
-                } else if (ssh_res == K85_SSH_START_NO_WIFI) {
-                    k85_show_message("SSH start failed\n(WiFi not saved)\nA+B=back");
-                } else if (ssh_res == K85_SSH_START_ALREADY_RUNNING) {
-                    k85_show_message("SSH already running\n(or stuck - reboot)\nA+B=back");
-                } else {
-                    k85_show_message("SSH start failed\n(task create error)\nA+B=back");
-                }
-                while (true) {
-                    k85_input_update();
-                    if (k85_ab_held(500)) { k85_wait_ab_release(); break; }
-                    vTaskDelay(pdMS_TO_TICKS(30));
-                }
-            }
-            ssh_done:
-            break;
-        }
-        case 14:
+        case 13:
             g_config.menu_ui_style = (g_config.menu_ui_style + 1) % 3;
             break;
-        case 15: {
+        case 14: {
             int new_mhz = k85_cpu_freq_cycle();
             if (new_mhz == 80) {
                 k85_show_message("Warning: 80MHz may\ncause WiFi/BT issues\nA+B=back");
@@ -616,20 +563,20 @@ static void settings_apply_item(int idx) {
             }
             break;
         }
-        case 16:
+        case 15:
             k85_run_power_menu();
             break;
-        case 17:
+        case 16:
             g_config.font_idx = (g_config.font_idx + 1) % K85_FONT_COUNT;
             k85_apply_font(g_config.font_idx);
             break;
-        case 18:
+        case 17:
             g_config.kbd_nav_mode = (g_config.kbd_nav_mode == 0) ? 1 : 0;
             break;
-        case 19:
+        case 18:
             g_config.cursor_mode = (g_config.cursor_mode + 1) % 4;
             break;
-        case 20:
+        case 19:
             g_config.desktop_mode = !g_config.desktop_mode;
             break;
         default:
@@ -777,3 +724,5 @@ void k85_run_settings_menu(void) {
         vTaskDelay(pdMS_TO_TICKS(30));
     }
 }
+
+// K85_SSH_REMOVED

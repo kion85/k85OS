@@ -2,6 +2,8 @@
 #pragma GCC diagnostic ignored "-Wformat-truncation"
 
 #include "script_engine.h"
+#include "shell_ext.h"
+#include "screenshot.h"
 #include "cron.h"
 #include "svc_cfg.h"
 #include "fs_guard.h"
@@ -54,6 +56,8 @@ static const char *const kBuiltins[] = {
     "help", "ps", "htop", "info", "free", "uptime", "battery", "wifi", "imu", "ls", "cat",
     "wifi-on", "wifi-off", "brightness", "volume", "panic-test", "reboot", "exit",
     "echo", "set", "alias", "unalias", "sleep", "sh", "cron", "ftp", "ftppass",
+    "grep", "head", "tail", "wc", "cp", "mv", "rm", "mkdir", "touch", "date", "df", "du",
+    "hostname", "ifconfig", "nslookup", "wget", "curl", "watch", "neofetch", "at", "tar", "scrprobe", "scrshot",
 };
 
 static bool is_builtin(const char *name) {
@@ -492,6 +496,7 @@ bool k85_ext_run_command(const char *cmd, const char *arg, char *out, size_t out
     if (!strcmp(cmd, "cron"))    { ext_cron(arg, out, out_size); return true; }
     if (!strcmp(cmd, "ftp"))     { ext_ftp(arg, out, out_size); return true; }
     if (!strcmp(cmd, "ftppass")) { ext_ftppass(arg, out, out_size); return true; }
+    if (k85_shell_ext_run(cmd, arg, out, out_size)) return true;
     return try_alias(cmd, arg, out, out_size);
 }
 
@@ -499,6 +504,7 @@ bool k85_ext_run_command(const char *cmd, const char *arg, char *out, size_t out
 static void boot_task(void *arg) {
     (void)arg;
     vTaskDelay(pdMS_TO_TICKS(3000));
+    k85_screenshot_start();   // A+B short tap = screenshot (also in safe mode)
 
     // Safe mode: after a crash/watchdog/brownout do not run anything
     // automatically, so a bad script or job can't cause a boot loop.

@@ -1,4 +1,4 @@
-﻿#include "tools_menu.h"
+#include "tools_menu.h"
 #include "list_menu.h"
 #include "common.h"
 #include "freertos/FreeRTOS.h"
@@ -35,6 +35,8 @@
 #include "tools/services.h"
 #include "tools/package_manager.h"
 #include "tools/ftp_tool.h"
+#include "tools/audio_tool.h"
+#include "tools/sysmon_tool.h"
 #include "M5Unified.h"
 #include <cstring>
 #include <cmath>
@@ -42,7 +44,7 @@
 static const char *TOOLS_ITEMS[] = {
     "WiFi Manager", "Color Test", "Bluetooth Scan", "I2C Scanner",
     "GPIO Control", "Files", "Music Player", "Melodies", "Mic Test",
-    "Air Mouse (screen)", "Air Mouse BLE", "WiFi Hotspot", "Calculator", "Terminal", "IR Remote", "SSH Connect", "Task Manager", "LoRa", "Internet SDR", "Web Radio", "Web Terminal", "Level", "Ping", "Authenticator", "Password Manager", "Orientation", "MQTT", "Disk Cleanup", "Services", "Package Manager", "FTP Server", "Back"
+    "Air Mouse (screen)", "Air Mouse BLE", "WiFi Hotspot", "Calculator", "Terminal", "IR Remote", "Task Manager", "LoRa", "Internet SDR", "Web Radio", "Web Terminal", "Level", "Ping", "Authenticator", "Password Manager", "Orientation", "MQTT", "Disk Cleanup", "Services", "Package Manager", "FTP Server", "Audio", "Performance", "Device Manager", "Back"
 };
 #define TOOLS_COUNT (int)(sizeof(TOOLS_ITEMS) / sizeof(TOOLS_ITEMS[0]))
 
@@ -193,6 +195,25 @@ static void draw_tools_icon(int cx, int cy, int r, const char *name, uint32_t co
         d.drawLine(cx + r/3, cy - r/6, cx + r/3, cy + r/2 - 2, col);
         d.drawLine(cx + r/3, cy + r/2 - 2, cx + r/3 - r/6, cy + r/3, col);
         d.drawLine(cx + r/3, cy + r/2 - 2, cx + r/3 + r/6, cy + r/3, col);
+    } else if (!strcmp(name, "Audio")) {
+        d.fillRect(cx - r, cy - r/4, r/2, r/2, col);
+        d.fillTriangle(cx - r/2, cy - r/4, cx, cy - r * 3 / 4, cx, cy + r * 3 / 4, col);
+        d.fillTriangle(cx - r/2, cy - r/4, cx - r/2, cy + r/4, cx, cy + r * 3 / 4, col);
+        d.drawArc(cx + r/6, cy, r/2, r/2 + 2, -45, 45, col);
+        d.drawArc(cx + r/6, cy, r, r + 2, -45, 45, col);
+    } else if (!strcmp(name, "Performance")) {
+        d.drawFastVLine(cx - r, cy - r, r * 2, col);
+        d.drawFastHLine(cx - r, cy + r, r * 2, col);
+        d.drawLine(cx - r/2, cy + r/2, cx - r/6, cy - r/6, col);
+        d.drawLine(cx - r/6, cy - r/6, cx + r/6, cy + r/4, col);
+        d.drawLine(cx + r/6, cy + r/4, cx + r/2, cy - r/2, col);
+    } else if (!strcmp(name, "Device Manager")) {
+        d.drawRect(cx - r/2, cy - r/2, r, r, col);
+        d.drawRect(cx - r/6, cy - r/6, r/3, r/3, col);
+        d.drawFastHLine(cx - r, cy - r/4, r/2, col);
+        d.drawFastHLine(cx - r, cy + r/4, r/2, col);
+        d.drawFastHLine(cx + r/2, cy - r/4, r/2, col);
+        d.drawFastHLine(cx + r/2, cy + r/4, r/2, col);
     } else if (!strcmp(name, "Back")) {
         d.drawLine(cx + r/2, cy - r/2, cx - r/2, cy, col);
         d.drawLine(cx - r/2, cy, cx + r/2, cy + r/2, col);
@@ -242,21 +263,13 @@ void k85_run_tools_menu(void) {
         else if (idx == 12) k85_run_calculator();
         else if (idx == 13) { if (k85_run_terminal()) return; }
         else if (idx == 14) k85_run_ir_remote();
-        else if (idx == 15) {
-            if (g_config.wifi_disabled) {
-                k85_show_message("WiFi disabled\n(k85os-menu)");
-                vTaskDelay(pdMS_TO_TICKS(1000));
-            } else {
-                k85_run_ssh_client();
-            }
-        }
-            else if (idx == 16) k85_run_task_manager();
-        else if (idx == 17) k85_run_lora_tool();
-        else if (idx == 18) k85_run_kiwisdr_client();
-        else if (idx == 19) k85_run_web_radio();
-        else if (idx == 20) k85_run_web_terminal();
-        else if (idx == 21) k85_run_level();
-        else if (idx == 22) {
+            else if (idx == 15) k85_run_task_manager();
+        else if (idx == 16) k85_run_lora_tool();
+        else if (idx == 17) k85_run_kiwisdr_client();
+        else if (idx == 18) k85_run_web_radio();
+        else if (idx == 19) k85_run_web_terminal();
+        else if (idx == 20) k85_run_level();
+        else if (idx == 21) {
             if (g_config.wifi_disabled) {
                 k85_show_message("WiFi disabled\n(k85os-menu)");
                 vTaskDelay(pdMS_TO_TICKS(1000));
@@ -264,13 +277,18 @@ void k85_run_tools_menu(void) {
                 k85_run_ping();
             }
         }
-        else if (idx == 23) k85_run_totp_auth();
-        else if (idx == 24) k85_run_password_manager();
-        else if (idx == 25) k85_run_orientation();
-        else if (idx == 26) k85_run_mqtt_tool();
-        else if (idx == 27) k85_run_disk_cleanup();
-        else if (idx == 28) k85_run_services();
-        else if (idx == 29) k85_run_package_manager();
-        else if (idx == 30) k85_run_ftp_tool();
+        else if (idx == 22) k85_run_totp_auth();
+        else if (idx == 23) k85_run_password_manager();
+        else if (idx == 24) k85_run_orientation();
+        else if (idx == 25) k85_run_mqtt_tool();
+        else if (idx == 26) k85_run_disk_cleanup();
+        else if (idx == 27) k85_run_services();
+        else if (idx == 28) k85_run_package_manager();
+        else if (idx == 29) k85_run_ftp_tool();
+        else if (idx == 30) k85_run_audio_tool();
+        else if (idx == 31) k85_run_performance();
+        else if (idx == 32) k85_run_device_manager();
     }
 }
+
+// K85_SSH_REMOVED

@@ -1,4 +1,5 @@
-﻿#include "ui/quick_settings.h"
+#include "ui/quick_settings.h"
+#include "voice.h" // K85V:inc
 #include "M5Unified.h"
 #include "core/config.h"
 #include "core/theme.h"
@@ -29,6 +30,20 @@ static int s_muted_prev_volume = -1; // -1 = звук не в mute
 
 static const int BRIGHTNESS_LEVELS[] = {25, 50, 75, 100};
 #define BRIGHTNESS_LEVEL_COUNT (int)(sizeof(BRIGHTNESS_LEVELS) / sizeof(BRIGHTNESS_LEVELS[0]))
+
+// K85V:qs - speak the quick-settings item names
+static void qs_voice_item(int i) {
+    switch (i) {
+        case QS_BRIGHTNESS: k85_voice_say("Brightness"); break;
+        case QS_WIFI: k85_voice_say("WiFi"); break;
+        case QS_BLUETOOTH: k85_voice_say("Bluetooth"); break;
+        case QS_FLASHLIGHT: k85_voice_say("Flashlight"); break;
+        case QS_SOUND: k85_voice_say("Sound"); break;
+        case QS_PROFILE: k85_voice_say("Profile"); break;
+        case QS_BACK: k85_voice_say("Back"); break;
+        default: break;
+    }
+}
 
 static void qs_run_flashlight(void) {
     M5.Display.fillScreen(0xFFFFFF);
@@ -159,6 +174,7 @@ static void qs_draw(void) {
 
 void k85_quick_settings_open(void) {
     s_qs_selected = 0;
+    qs_voice_item(0);
     k85_wait_ab_release();
     qs_draw();
 
@@ -172,6 +188,7 @@ void k85_quick_settings_open(void) {
 
         if (k85_btn_a_pressed()) {
             s_qs_selected = (s_qs_selected + 1) % K85_QS_ITEM_COUNT;
+            qs_voice_item(s_qs_selected);
             qs_draw();
         }
 
@@ -180,6 +197,7 @@ void k85_quick_settings_open(void) {
                 return;
             }
             qs_activate_selected();
+            if (s_qs_selected == QS_BRIGHTNESS) { char k85vb[24]; snprintf(k85vb, sizeof(k85vb), "Brightness %d", g_config.brightness_active); k85_voice_say(k85vb); }
             qs_draw();
         }
 

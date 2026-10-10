@@ -1,4 +1,4 @@
-﻿idf_component_register(
+idf_component_register(
     SRCS "k85os_idf.cpp"
          "core/config.cpp"
          "core/cursor.cpp"
@@ -26,7 +26,7 @@
          "ui/qr_wifi.cpp"
          "ui/text_input.cpp"
          "steps/step_counter.cpp"
-         "system/system_info.cpp"
+         "system/system_info.cpp" "system/voice.cpp"
          "system/logs_screen.cpp"
          "net/wifi.cpp"
          "apps/store.cpp"
@@ -73,6 +73,7 @@
          "apps/bios_extras.cpp"
          "apps/bios_diag.cpp"
          "apps/bios_password.cpp"
+         "apps/bios_system.cpp"
          "apps/test_mode.cpp"
          "net/ota.cpp"
          "apps/games/snake.cpp"
@@ -104,10 +105,15 @@
          "apps/tools/services.cpp"
          "apps/tools/package_manager.cpp"
          "apps/tools/ftp_tool.cpp"
+         "apps/tools/audio_tool.cpp"
+         "apps/tools/sysmon_tool.cpp"
          "net/ota_verify.cpp"
 	 "net/ftp_server.cpp"
 	 "core/svc_cfg.cpp"
 	 "core/script_engine.cpp"
+         "core/shell_ext.cpp"
+         "core/screenshot.cpp"
+         "core/line_edit.cpp"
 	 "core/cron.cpp"
     INCLUDE_DIRS "." "core" "ui" "steps" "system" "net" "apps" "apps/games" "apps/tools" "ble_hid"
     PRIV_REQUIRES bootloader_support efuse json esp_netif esp_driver_tsens esp_wifi nvs_flash esp_event esp_driver_i2c esp_driver_gpio bt esp_driver_rmt esp_https_ota esp_http_client app_update mbedtls esp-libhelix-mp3 mbedtls wolfssl wolfssh esp_psram esp_websocket_client mqtt mdns

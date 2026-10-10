@@ -140,11 +140,6 @@ static bool k85_hid_stack_init(void) {
 }
 
 void k85_run_air_mouse_ble(void) {
-    if (k85_ssh_server_is_running()) {
-        k85_show_message("SSH server active\nStop it first\nA+B=back");
-        vTaskDelay(pdMS_TO_TICKS(1800));
-        return;
-    }
     // Освобождаем internal RAM от WiFi-драйвера перед BLE-инициализацией —
     // без этого BLE-контроллер может уронить CORRUPT HEAP из-за
     // фрагментации памяти (WiFi+BLE вместе тесно на этой памяти).

@@ -7,6 +7,7 @@
 #include "battery.h"
 #include "fs_guard.h"
 #include "script_engine.h"
+#include "shell_ext.h"
 
 #include "esp_chip_info.h"
 #include "esp_flash.h"
@@ -134,7 +135,7 @@ static void cmd_ps(char *out, size_t out_size) {
     }
 }
 
-void k85_shell_run_command(const char *cmd_full, char *out, size_t out_size) {
+static void shell_run_simple(const char *cmd_full, char *out, size_t out_size) {
     char cmd[32] = {0};
     const char *arg = "";
     const char *sp = strchr(cmd_full, ' ');
@@ -155,6 +156,9 @@ void k85_shell_run_command(const char *cmd_full, char *out, size_t out_size) {
             "  wifi-on, wifi-off, brightness <0-100>, volume <0-100>\r\n"
             "  echo, set, alias, unalias, sleep <s>, sh <file>\r\n"
             "  cron [on|off|reload|list], ftp [start|stop], ftppass <user> <pass>\r\n"
+            "  grep, head, tail, wc, cp, mv, rm, mkdir, touch, date, df, du\r\n"
+            "  hostname, ifconfig, nslookup, wget, curl, watch, neofetch, at, tar, scrshot\r\n"
+            "  pipes | and redirects > >> are supported\r\n"
             "  reboot, exit\r\n");
     } else if (!strcmp(cmd, "ps") || !strcmp(cmd, "htop")) {
         cmd_ps(out, out_size);
@@ -213,6 +217,10 @@ void k85_shell_run_command(const char *cmd_full, char *out, size_t out_size) {
     } else {
         snprintf(out, out_size, "Unknown command: %s (try 'help')\r\n", cmd);
     }
+}
+
+void k85_shell_run_command(const char *cmd_full, char *out, size_t out_size) {
+    k85_shell_pipeline(cmd_full, out, out_size, shell_run_simple);
 }
 
 #pragma GCC diagnostic pop

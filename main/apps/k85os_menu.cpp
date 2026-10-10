@@ -1,4 +1,5 @@
-﻿#include "k85os_menu.h"
+#include "k85os_menu.h"
+#include "voice.h" // K85V:inc
 #include "bios_extras.h"
 #include "bios_password.h"
 #include "common.h"
@@ -371,6 +372,7 @@ static void run_customization_menu(void) {
         if (k85_ab_held(500)) { k85_wait_ab_release(); return; }
         if (k85_btn_a_pressed()) {
             selected = (selected + 1) % CUST_COUNT;
+            k85_voice_say(labeled[selected]);
             draw();
         }
         if (k85_btn_b_pressed()) {
@@ -869,6 +871,7 @@ static int bios_hit_test(void) {
 void k85_run_bios_menu(void) {
     if (!k85_bios_password_gate()) return;
     s_selected = 0;
+    k85_voice_say(k85_bios_labels[s_selected]);
     s_scroll_top = 0;
     s_bios_theme = k85_bios_theme_load();
     bios_draw();
@@ -895,7 +898,7 @@ void k85_run_bios_menu(void) {
                     pending_hover = hover;
                     pending_hover_since = now;
                 } else if ((now - pending_hover_since) >= K85_BIOS_HOVER_DWELL_MS * 1000) {
-                    s_selected = hover;
+                    if (s_selected != hover) { s_selected = hover; k85_voice_say(k85_bios_labels[s_selected]); }
                 }
             } else {
                 pending_hover = -1;
@@ -916,6 +919,7 @@ void k85_run_bios_menu(void) {
 
         if (k85_btn_a_pressed()) {
             s_selected = (s_selected + 1) % K85_BIOS_ITEM_COUNT;
+            k85_voice_say(k85_bios_labels[s_selected]); // K85V:bios
             bios_draw();
         }
         if (k85_btn_b_pressed()) {
