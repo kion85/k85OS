@@ -26,3 +26,10 @@ voice.pak
 *.qsbak
 *.ssbak
 *.fnbak
+
+*.bssbak
+*.secbak
+*.sec2bak
+*.sec3bak
+*.j32bak
+audit_report.txt
