@@ -1,4 +1,5 @@
 #include "firmware_flash.h"
+#include "esp_attr.h"
 
 #include "esp_https_ota.h"
 #include "esp_http_client.h"
@@ -127,7 +128,7 @@ bool k85_fwflash_list_available(char out_names[][64], char out_urls[][256], char
     char url[160];
     snprintf(url, sizeof(url), "https://api.github.com/repos/%s/%s/releases/latest", K85_FW_OWNER, K85_FW_REPO);
 
-    static char json_buf[4096];
+    static EXT_RAM_BSS_ATTR char json_buf[32768];
     HttpBuf buf = { json_buf, 0, sizeof(json_buf) };
     json_buf[0] = 0;
 

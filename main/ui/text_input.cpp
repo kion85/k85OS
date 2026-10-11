@@ -1,4 +1,5 @@
-﻿#include "text_input.h"
+#include "text_input.h"
+#include "esp_attr.h"
 #include "theme.h"
 #include "battery.h"
 #include "power.h"
@@ -247,7 +248,7 @@ bool k85_text_input(const char *prompt, const char *initial, char *out, size_t o
 }
 
 bool k85_text_input_multiline(const char *prompt, const char *initial, char *out, size_t out_size) {
-    static char text[2048];
+    static EXT_RAM_BSS_ATTR char text[2048];
     snprintf(text, sizeof(text), "%s", initial ? initial : "");
 
     int st_row = 0, st_col = 0;

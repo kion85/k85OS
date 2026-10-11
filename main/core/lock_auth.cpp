@@ -1,4 +1,4 @@
-﻿#include "lock_auth.h"
+#include "lock_auth.h"
 
 #include "mbedtls/md.h"
 #include "mbedtls/pkcs5.h"
@@ -26,10 +26,11 @@ static bool hex_to_bytes(const char *hex, size_t hex_len, unsigned char *out, si
 }
 
 static void pbkdf2(const char *password, const unsigned char *salt, unsigned char *out_hash) {
-    mbedtls_pkcs5_pbkdf2_hmac_ext(MBEDTLS_MD_SHA256,
+    int rc = mbedtls_pkcs5_pbkdf2_hmac_ext(MBEDTLS_MD_SHA256,
                                   (const unsigned char *)password, strlen(password),
                                   salt, K85_LOCK_SALT_BYTES, K85_LOCK_ITERATIONS,
                                   K85_LOCK_HASH_BYTES, out_hash);
+    if (rc != 0) esp_fill_random(out_hash, K85_LOCK_HASH_BYTES);  // K85SEC: fail closed, a failed KDF must never match
 }
 
 void k85_lock_hash_password(const char *password, char *out, size_t out_size) {
@@ -60,6 +61,8 @@ bool k85_lock_verify_password(const char *password, const char *stored_hex) {
     unsigned char computed[K85_LOCK_HASH_BYTES];
     pbkdf2(password, salt, computed);
 
-    return memcmp(computed, stored_hash, K85_LOCK_HASH_BYTES) == 0;
+    unsigned char diff = 0;
+    for (int i = 0; i < K85_LOCK_HASH_BYTES; i++) diff |= (unsigned char)(computed[i] ^ stored_hash[i]);  // K85SEC: constant time
+    return diff == 0;
 }
 

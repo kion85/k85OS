@@ -2,6 +2,7 @@
 #pragma GCC diagnostic ignored "-Wformat-truncation"
 
 #include "script_engine.h"
+#include "lock_auth.h"
 #include "shell_ext.h"
 #include "screenshot.h"
 #include "cron.h"
@@ -456,8 +457,8 @@ static void ext_ftppass(const char *arg, char *out, size_t out_size) {
     first_token(arg, user, sizeof(user), &pass);
     size_t ul = strlen(user);
     size_t pl = strlen(pass);
-    if (ul == 0 || ul > 31 || pl < 4 || pl > 64) {
-        snprintf(out, out_size, "usage: ftppass <user> <password>  (password 4-64 chars)\r\n");
+    if (ul == 0 || ul > 31 || pl < 8 || pl > 64) {
+        snprintf(out, out_size, "usage: ftppass <user> <password>  (password 8-64 chars)\r\n");
         return;
     }
     for (size_t i = 0; i < ul; i++) {
@@ -467,8 +468,9 @@ static void ext_ftppass(const char *arg, char *out, size_t out_size) {
             return;
         }
     }
-    char hx[65];
-    k85_ssh_hash_password(pass, hx);
+    char hx[100];   // K85SEC3: salted PBKDF2 (same scheme as the lock screen)
+    k85_lock_hash_password(pass, hx, sizeof(hx));
+    if (!hx[0]) { snprintf(out, out_size, "ftppass: hashing failed\r\n"); return; }
     k85_svc_set_str("ftp_user", user);
     k85_svc_set_str("ftp_hash", hx);
     snprintf(out, out_size, "FTP login saved (user: %s)\r\n", user);

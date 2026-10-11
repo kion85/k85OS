@@ -90,7 +90,7 @@ extern "C" void app_main(void) {
     }
     k85_cpu_freq_apply_saved();
 
-    k85_heavy_lock_init(); // резервируем стек под SSH-таск заранее, littlefs уже готов
+    k85_heavy_lock_init(); remove("/littlefs/k85_ssh_host_key.der");  // K85SEC: SSH is gone, delete the stale host key // резервируем стек под SSH-таск заранее, littlefs уже готов
     k85_rtc_ntp_init();
     k85_post_report_check(post_report, PostCode::RTC_TIME_FAIL, k85_rtc_is_present());
 

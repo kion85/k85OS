@@ -1,4 +1,5 @@
 #include "terminal.h"
+#include "esp_attr.h"
 #include "config.h"
 #include "theme.h"
 #include "input.h"
@@ -70,7 +71,7 @@ static void terminal_show_result(const char *text) {
 // и весь вывод можно листать кнопкой A, а не только видеть первые 10 строк.
 static void terminal_show_output_scrollable(const char *raw_text) {
     #define K85_TERM_MAX_WRAPPED 48
-    static char wrapped_storage[2048];
+    static EXT_RAM_BSS_ATTR char wrapped_storage[2048];
     const char *wrapped_lines[K85_TERM_MAX_WRAPPED];
     int wrapped_count = 0;
 

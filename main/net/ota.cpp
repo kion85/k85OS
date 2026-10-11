@@ -1,4 +1,5 @@
 #include "ota.h"
+#include "esp_attr.h"
 #include "core/heavy_lock.h"
 #include "../core/version.h"
 #include "../core/notifications.h"
@@ -82,7 +83,7 @@ static bool version_is_newer(const char *remote, const char *local) {
 bool k85_ota_check_update(char *out_version, size_t ver_size, char *out_url, size_t url_size,
                            char *out_sig_url, size_t sig_url_size) {
     if (g_config.ota_locked) return false;
-    static char json_buf[4096];
+    static EXT_RAM_BSS_ATTR char json_buf[32768];
     if (!fetch_latest_release_json(json_buf, sizeof(json_buf))) return false;
 
     cJSON *root = cJSON_Parse(json_buf);

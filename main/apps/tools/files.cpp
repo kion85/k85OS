@@ -1,4 +1,5 @@
 #include "files.h"
+#include "esp_attr.h"
 #include "common.h"
 #include "text_input.h"
 #include "list_menu.h"
@@ -49,7 +50,7 @@ static void read_file_view(const char *full_path, const char *name, long size) {
         wait_ab_exit();
         return;
     }
-    static char buf[4096];
+    static EXT_RAM_BSS_ATTR char buf[4096];
     size_t read_n = fread(buf, 1, sizeof(buf) - 1, f);
     fclose(f);
     buf[read_n] = 0;

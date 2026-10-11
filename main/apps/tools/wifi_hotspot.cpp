@@ -98,7 +98,7 @@ static bool sanitize_relpath(const char *name) {
 }
 
 static bool is_blocked_download_path(const char *path) {
-    static const char *blocked[] = { "k85_ssh_host_key", "k85os_config.json", "k85_ssh_" };
+    static const char *blocked[] = { "k85_ssh_host_key", "k85os_config.json", "k85_ssh_", "k85_svc" };
     for (size_t i = 0; i < sizeof(blocked) / sizeof(blocked[0]); i++) {
         if (strstr(path, blocked[i])) return true;
     }

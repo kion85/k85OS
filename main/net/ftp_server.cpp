@@ -2,6 +2,7 @@
 #pragma GCC diagnostic ignored "-Wformat-truncation"
 
 #include "ftp_server.h"
+#include "lock_auth.h"
 #include "wifi.h"
 #include "ssh_server.h"
 #include "../core/svc_cfg.h"
@@ -367,19 +368,30 @@ static void do_stor(Sess *s, const char *arg) {
     if (ok) reply(s, 226, "Upload complete"); else reply(s, 552, "Upload failed");
 }
 
+static int s_glob_fails = 0;                 // K85SEC: failures across all connections
+static int64_t s_glob_lock_until = 0;
 static void do_pass(Sess *s, const char *arg, bool *close_session) {
-    char cu[40] = {0}, ch[72] = {0};
+if (esp_timer_get_time() < s_glob_lock_until) { reply(s, 421, "Too many failed logins, try later"); *close_session = true; return; }
+    char cu[40] = {0}, ch[110] = {0};
     bool have = k85_svc_get_str("ftp_user", cu, sizeof(cu)) && k85_svc_get_str("ftp_hash", ch, sizeof(ch));
-    char hx[65];
-    k85_ssh_hash_password(arg, hx);
-    bool ok = have && s->user_given && ct_eq(cu, s->user) && ct_eq(ch, hx);
+    bool ok = false;   // K85SEC3
+    if (have && s->user_given && ct_eq(cu, s->user)) {
+        if (strlen(ch) == 64) {                       // old unsalted SHA-256: accept once, then upgrade
+            char hx[65];
+            k85_ssh_hash_password(arg, hx);
+            ok = ct_eq(ch, hx);
+            if (ok) { char nh[100]; k85_lock_hash_password(arg, nh, sizeof(nh)); if (nh[0]) k85_svc_set_str("ftp_hash", nh); }
+        } else {
+            ok = k85_lock_verify_password(arg, ch);
+        }
+    }
     if (ok) {
-        s->authed = true;
+        s->authed = true; s_glob_fails = 0;
         reply(s, 230, "Login successful");
         return;
     }
     vTaskDelay(pdMS_TO_TICKS(2000));              // slow down guessing
-    s->fails++;
+    s->fails++; if (++s_glob_fails >= 6) { s_glob_lock_until = esp_timer_get_time() + 300LL * 1000000LL; s_glob_fails = 0; }
     s->authed = false;
     if (s->fails >= 3) {
         reply(s, 421, "Too many failed logins");

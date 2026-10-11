@@ -1,4 +1,5 @@
 #include "web_terminal.h"
+#include "esp_attr.h"
 #include "../../net/wifi.h"
 #include "../../core/shell_commands.h"
 #include "list_menu.h"
@@ -173,8 +174,16 @@ cmdBox.addEventListener('keydown', (e) => {
 </script>
 </body></html>)HTML";
 
+// K85SEC: random per-login session token; the access key itself is never put into a cookie
+static char s_session[33] = {0};
+static void new_session_token(void) {
+    unsigned char r[16];
+    esp_fill_random(r, sizeof(r));
+    for (int i = 0; i < 16; i++) snprintf(s_session + i * 2, 3, "%02x", r[i]);
+}
+
 static void handle_connection(int conn_fd) {
-    static char req_buf[2048];
+    static EXT_RAM_BSS_ATTR char req_buf[2048];
     long req_len = 0;
     long headers_end = -1;
 
@@ -215,11 +224,11 @@ static void handle_connection(int conn_fd) {
         get_param(body_ptr, "key", submitted, sizeof(submitted));
 
         if (const_time_streq(submitted, s_access_key)) {
-            s_failed_attempts = 0;
+            s_failed_attempts = 0; new_session_token();
             char resp[256];
             snprintf(resp, sizeof(resp),
-                "HTTP/1.1 302 Found\r\nSet-Cookie: k85term=%s; Path=/\r\nLocation: /\r\nConnection: close\r\n\r\n",
-                s_access_key);
+                "HTTP/1.1 302 Found\r\nSet-Cookie: k85term=%s; Path=/; HttpOnly; SameSite=Strict\r\nLocation: /\r\nConnection: close\r\n\r\n",
+                s_session);
             send(conn_fd, resp, strlen(resp), 0);
         } else {
             s_failed_attempts++;
@@ -233,9 +242,9 @@ static void handle_connection(int conn_fd) {
         return;
     }
 
-    char cookie_key[32] = {0};
+    char cookie_key[40] = {0};
     bool authed = get_cookie_value(req_buf, (size_t)headers_end, "k85term", cookie_key, sizeof(cookie_key))
-                  && const_time_streq(cookie_key, s_access_key);
+                  && s_session[0] != 0 && const_time_streq(cookie_key, s_session);
     if (!authed) {
         send_http(conn_fd, "401 Unauthorized", "text/html", K85_LOGIN_HTML);
         return;
@@ -272,10 +281,7 @@ static void handle_connection(int conn_fd) {
 }
 
 static bool setup_ap_and_get_choice(bool *out_open, char *out_pass, size_t pass_size, int *out_channel) {
-    const char *sec_items[] = { "Open (no password)", "WPA2 (set password)" };
-    int sec = k85_run_list_menu("ENCRYPTION", sec_items, 2, nullptr);
-    if (sec < 0) return false;
-    *out_open = (sec == 0);
+    *out_open = false;  // K85SEC: a full shell must not be offered over an open AP
 
     if (!*out_open) {
         if (!k85_text_input("AP password\n(min 8 chars):", "", out_pass, pass_size)) return false;
@@ -297,6 +303,7 @@ static bool setup_ap_and_get_choice(bool *out_open, char *out_pass, size_t pass_
 }
 
 void k85_run_web_terminal(void) {
+s_session[0] = 0;
     const char *net_items[] = { "Use current WiFi", "Create own AP (k85os-term)" };
     int net_choice = k85_run_list_menu("NETWORK MODE", net_items, 2, nullptr);
     if (net_choice < 0) return;

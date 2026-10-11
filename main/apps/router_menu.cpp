@@ -1,7 +1,8 @@
-﻿#pragma GCC diagnostic push
+#pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat-truncation"
 
 #include "router_menu.h"
+#include "esp_attr.h"
 #include "ui/common.h"
 #include "ui/list_menu.h"
 #include "ui/text_input.h"
@@ -201,7 +202,7 @@ static void build_status_page(char *out, size_t out_size, const char *ssid, bool
 }
 
 static void handle_router_connection(int conn_fd, const char *ssid, bool is_guest) {
-    static char req_buf[2048];
+    static EXT_RAM_BSS_ATTR char req_buf[2048];
     long req_len = 0;
     long headers_end = -1;
     while (headers_end < 0 && req_len < (long)sizeof(req_buf) - 1) {

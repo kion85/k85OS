@@ -1,4 +1,5 @@
-﻿#include "web_radio.h"
+#include "web_radio.h"
+#include "esp_attr.h"
 #include "../../net/wifi.h"
 #include "list_menu.h"
 #include "text_input.h"
@@ -512,7 +513,7 @@ setInterval(refreshStatus, 2000);
 </body></html>)HTML";
 
 static void handle_connection(int conn_fd) {
-    static char req_buf[2048];
+    static EXT_RAM_BSS_ATTR char req_buf[2048];
     long req_len = 0;
     long headers_end = -1;
 
