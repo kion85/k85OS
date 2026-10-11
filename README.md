@@ -100,4 +100,3 @@ I don't have any real desire for my firmware to be able to attack anyone, captur
 
 Good luck to everyone, and I wish you all the very best in life!
 
-P.S.: SSH support will work similarly to Bruce's implementation. Apologies if that earlier led anyone to the wrong idea.
