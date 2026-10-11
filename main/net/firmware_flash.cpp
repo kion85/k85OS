@@ -29,6 +29,12 @@ const char *k85_fwflash_free_slot_label(void) {
     return p ? p->label : "?";
 }
 
+// K85SEC4: after a failed or aborted write the slot holds unverified bytes: destroy the image header
+// so that nobody can activate it later through "Alt Firmware" / the BIOS boot-slot menu.
+static void invalidate_slot(void) {
+    if (s_ota_partition) esp_partition_erase_range(s_ota_partition, 0, 4096);
+}
+
 bool k85_fwflash_stream_begin(void) {
     if (s_stream_active) return false;
 
@@ -72,7 +78,7 @@ bool k85_fwflash_stream_end_verified(const char *signature_hex) {
     if (!signature_hex || !k85_ota_verify_signature_hex(hash, sizeof(hash), signature_hex)) {
         ESP_LOGE(TAG, "firmware signature verification FAILED - refusing to keep this image");
         s_stream_active = false;
-        esp_ota_abort(s_ota_handle);
+        esp_ota_abort(s_ota_handle); invalidate_slot();
         return false;
     }
     ESP_LOGI(TAG, "firmware signature verified OK");
@@ -92,7 +98,7 @@ bool k85_fwflash_stream_end(void) {
     if (s_stream_active) {
         s_stream_active = false;
         mbedtls_sha256_free(&s_hash_ctx);
-        esp_ota_abort(s_ota_handle);
+        esp_ota_abort(s_ota_handle); invalidate_slot();
     }
     return false;
 }
@@ -101,7 +107,7 @@ void k85_fwflash_stream_abort(void) {
     if (!s_stream_active) return;
     s_stream_active = false;
     mbedtls_sha256_free(&s_hash_ctx);
-    esp_ota_abort(s_ota_handle);
+    esp_ota_abort(s_ota_handle); invalidate_slot();
 }
 
 struct HttpBuf {
@@ -117,7 +123,7 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
             memcpy(buf->data + buf->len, evt->data, evt->data_len);
             buf->len += evt->data_len;
             buf->data[buf->len] = 0;
-        }
+        } else { buf->len = buf->cap; }  // K85SEC4: overflow, stop appending
     }
     return ESP_OK;
 }

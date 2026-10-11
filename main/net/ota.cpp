@@ -36,7 +36,7 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
             memcpy(buf->data + buf->len, evt->data, evt->data_len);
             buf->len += evt->data_len;
             buf->data[buf->len] = 0;
-        }
+        } else { buf->len = buf->cap; }  // K85SEC7: overflow, stop appending
     }
     return ESP_OK;
 }

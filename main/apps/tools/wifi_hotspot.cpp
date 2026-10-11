@@ -1,4 +1,5 @@
 #include "wifi_hotspot.h"
+#include "fs_guard.h"
 #include "wifi.h"
 #include "common.h"
 #include "qr_wifi.h"
@@ -156,33 +157,21 @@ static bool get_cookie_value(const char *headers_block, size_t headers_len, cons
     return true;
 }
 
+// K85SEC6: the cookie carries a random per-login session token, never the access key itself.
+// The key is no longer accepted in the URL (it would end up in the browser history and logs).
+static char s_session[33] = {0};
+static void new_session_token(void) {
+    unsigned char r[16];
+    esp_fill_random(r, sizeof(r));
+    for (int i = 0; i < 16; i++) snprintf(s_session + i * 2, 3, "%02x", r[i]);
+}
+
 static bool check_access_key(const char *headers_block, size_t headers_len, const char *query) {
-    int64_t now = esp_timer_get_time();
-    if (now < s_lockout_until_us) return false;
-
-    char cookie_key[32] = {0};
-    if (get_cookie_value(headers_block, headers_len, "k85key", cookie_key, sizeof(cookie_key))) {
-        if (const_time_streq(cookie_key, s_web_access_key)) {
-            s_failed_attempts = 0;
-            return true;
-        }
-    }
-
-    char key[32] = {0};
-    if (!get_query_param(query, "key", key, sizeof(key))) return false;
-
-    bool ok = const_time_streq(key, s_web_access_key);
-    if (!ok) {
-        s_failed_attempts++;
-        int shift = s_failed_attempts > 5 ? 5 : s_failed_attempts - 1;
-        int delay_s = 1 << shift;
-        if (delay_s > 30) delay_s = 30;
-        s_lockout_until_us = now + (int64_t)delay_s * 1000000;
-        k85_log("web-fm: bad access key attempt #%d, locked %ds", s_failed_attempts, delay_s);
-    } else {
-        s_failed_attempts = 0;
-    }
-    return ok;
+    (void)query;
+    char cookie_key[40] = {0};
+    return s_session[0] != 0 &&
+           get_cookie_value(headers_block, headers_len, "k85key", cookie_key, sizeof(cookie_key)) &&
+           const_time_streq(cookie_key, s_session);
 }
 
 static const char *k85_login_page_html =
@@ -314,7 +303,10 @@ static bool handle_upload_body(int conn_fd, const char *header,
         snprintf(full_path, sizeof(full_path), "%s/%s", K85_UPLOAD_BASE_PATH, filename);
     }
 
-    FILE *f = fopen(full_path, "wb");
+    if (k85_is_blocked_path(full_path)) { k85_log("upload: refused protected file name: %s", filename); return false; }  // K85SEC4
+    char tmp_path[272];
+    snprintf(tmp_path, sizeof(tmp_path), "%s.part", full_path);
+    FILE *f = fopen(tmp_path, "wb");
     if (!f) {
         k85_log("upload: fopen failed for %s", full_path);
         return false;
@@ -354,12 +346,15 @@ static bool handle_upload_body(int conn_fd, const char *header,
         have += r;
     }
 
+    if (ferror(f)) ok = false;
     fclose(f);
     if (!ok) {
-        remove(full_path);
+        remove(tmp_path);
         k85_log("upload: incomplete, removed %s", full_path);
         return false;
     }
+    remove(full_path);
+    if (rename(tmp_path, full_path) != 0) { remove(tmp_path); k85_log("upload: rename failed for %s", full_path); return false; }
     k85_log("upload: saved %s", full_path);
     return true;
 }
@@ -789,11 +784,11 @@ static void handle_connection(int conn_fd, const char *ssid) {
         get_query_param(body_ptr, "key", submitted_key, sizeof(submitted_key));
 
         if (const_time_streq(submitted_key, s_web_access_key)) {
-            s_failed_attempts = 0;
+            s_failed_attempts = 0; new_session_token();
             char resp_header[256];
             snprintf(resp_header, sizeof(resp_header),
-                "HTTP/1.1 302 Found\r\nSet-Cookie: k85key=%s; Path=/\r\nLocation: /\r\nConnection: close\r\n\r\n",
-                s_web_access_key);
+                "HTTP/1.1 302 Found\r\nSet-Cookie: k85key=%s; Path=/; HttpOnly; SameSite=Strict\r\nLocation: /\r\nConnection: close\r\n\r\n",
+                s_session);
             send(conn_fd, resp_header, strlen(resp_header), 0);
             return;
         } else {
@@ -871,7 +866,7 @@ static void handle_connection(int conn_fd, const char *ssid) {
     } else if (strcmp(path, "/mkdir") == 0) {
         char name[128] = {0};
         get_query_param(query, "name", name, sizeof(name));
-        if (sanitize_relpath(name) && name[0]) {
+        if (sanitize_relpath(name) && name[0] && !is_blocked_download_path(name)) {
             char full_path[256];
             if (dir[0]) snprintf(full_path, sizeof(full_path), "%s/%s/%s", K85_UPLOAD_BASE_PATH, dir, name);
             else snprintf(full_path, sizeof(full_path), "%s/%s", K85_UPLOAD_BASE_PATH, name);
@@ -884,7 +879,7 @@ static void handle_connection(int conn_fd, const char *ssid) {
     } else if (strcmp(path, "/delete") == 0) {
         char name[192] = {0};
         get_query_param(query, "name", name, sizeof(name));
-        if (sanitize_relpath(name)) {
+        if (sanitize_relpath(name) && !is_blocked_download_path(name))  /* K85SEC5 */ {
             char full_path[256];
             snprintf(full_path, sizeof(full_path), "%s/%s", K85_UPLOAD_BASE_PATH, name);
             remove(full_path);
@@ -967,7 +962,7 @@ static bool choose_ap_password(char *out_password, size_t out_size) {
 }
 
 void k85_wifi_hotspot_regenerate_key(void) {
-    gen_random_string(s_web_access_key, 6 + (int)(esp_random() % 5), false);
+    gen_random_string(s_web_access_key, 6 + (int)(esp_random() % 5), false); s_session[0] = 0;
     k85_log("web-fm: access key regenerated");
 }
 
@@ -975,7 +970,7 @@ void k85_run_wifi_hotspot(void) {
     char password[32];
     if (!choose_ap_password(password, sizeof(password))) return;
 
-    gen_random_string(s_web_access_key, 6 + (int)(esp_random() % 5), false);
+    gen_random_string(s_web_access_key, 6 + (int)(esp_random() % 5), false); s_session[0] = 0;
 
     k85_wifi_init();
 
