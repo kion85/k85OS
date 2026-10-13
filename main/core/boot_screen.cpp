@@ -17,7 +17,7 @@
 #include <cstring>
 #include <cmath>
 
-#define K85_FW_VERSION "7.7.1"
+#define K85_FW_VERSION "7.8"
 #define K85_BOOT_DURATION_MS 4000
 #define K85_BOOT_MENU_TIMEOUT_MS 3000
 

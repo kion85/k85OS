@@ -72,12 +72,28 @@ static bool fetch_latest_release_json(char *out, size_t out_cap) {
 }
 
 // Сравнение версий вида "4.2" > "4.1"
+// K85SEC8: compare versions segment by segment (7.7.1 is newer than 7.7, 7.10 is newer than 7.9).
+// The old code read only "major.minor", so a 7.7.1 release was invisible to devices running 7.7.
 static bool version_is_newer(const char *remote, const char *local) {
-    int r_maj = 0, r_min = 0, l_maj = 0, l_min = 0;
-    sscanf(remote, "%d.%d", &r_maj, &r_min);
-    sscanf(local, "%d.%d", &l_maj, &l_min);
-    if (r_maj != l_maj) return r_maj > l_maj;
-    return r_min > l_min;
+    int r[3] = {0, 0, 0}, l[3] = {0, 0, 0};
+    const char *src[2] = { remote, local };
+    int *dst[2] = { r, l };
+    for (int k = 0; k < 2; k++) {
+        const char *p = src[k] ? src[k] : "";
+        while (*p == 'v' || *p == 'V' || *p == ' ') p++;
+        for (int i = 0; i < 3; i++) {
+            char *end = nullptr;
+            long v = strtol(p, &end, 10);
+            if (end == p) break;
+            dst[k][i] = (int)v;
+            p = end;
+            if (*p == '.') p++; else break;
+        }
+    }
+    for (int i = 0; i < 3; i++) {
+        if (r[i] != l[i]) return r[i] > l[i];
+    }
+    return false;
 }
 
 bool k85_ota_check_update(char *out_version, size_t ver_size, char *out_url, size_t url_size,
