@@ -33,3 +33,5 @@ voice.pak
 *.sec3bak
 *.j32bak
 audit_report.txt
+
+*.*bak
