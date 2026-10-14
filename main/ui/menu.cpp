@@ -17,6 +17,7 @@
 #include "store.h"
 #include "tools_menu.h"
 #include "games_menu.h"
+#include "linux_menu.h" // K85LNX
 #include "../apps/tools/json_interpreter.h"
 #include "rtc_ntp.h"
 #include "clock_menu.h"
@@ -36,7 +37,7 @@
 
 static const char *const K85_MENU_ITEMS[] = {
     "Low tone", "High tone", "Both tones", "Cube", "Colors",
-    "Clock", "WiFi", "Apps", "Tools", "Games", "Interpreter", "Settings", "System info", "Logs", "Notifications",
+    "Clock", "WiFi", "Apps", "Tools", "Games", "Linux", "Interpreter", "Settings", "System info", "Logs", "Notifications",
 };
 #define K85_MENU_ITEM_COUNT (int)(sizeof(K85_MENU_ITEMS) / sizeof(K85_MENU_ITEMS[0]))
 
@@ -124,6 +125,14 @@ static void draw_menu_icon(int cx, int cy, int r, const char *name, uint32_t col
         d.fillRect(cx + 2, cy - r/2, s, s, col);
         d.fillRect(cx - r/2, cy + 2, s, s, col);
         d.fillRect(cx + 2, cy + 2, s, s, col);
+    } else if (!strcmp(name, "Linux")) {  // K85LNX
+        M5.Display.drawEllipse(cx, cy + r / 4, r / 2 + 2, r * 3 / 4, col);        // body
+        M5.Display.drawCircle(cx, cy - r / 2, r / 3 + 1, col);                    // head
+        M5.Display.fillCircle(cx - r / 8 - 1, cy - r / 2 - 1, 1, col);            // eyes
+        M5.Display.fillCircle(cx + r / 8 + 1, cy - r / 2 - 1, 1, col);
+        M5.Display.fillTriangle(cx - 2, cy - r / 2 + 3, cx + 2, cy - r / 2 + 3, cx, cy - r / 2 + 6, col);  // beak
+        M5.Display.drawLine(cx - r / 3, cy + r, cx - r / 6, cy + r, col);         // feet
+        M5.Display.drawLine(cx + r / 6, cy + r, cx + r / 3, cy + r, col);
     } else if (!strcmp(name, "Tools")) {
         d.fillCircle(cx - r/2, cy - r/2, r/3, col);
         d.drawLine(cx - r/2, cy - r/2, cx + r/2, cy + r/2, col);
@@ -587,6 +596,8 @@ static void run_action(int index) {
         k85_run_games_menu();
     } else if (!strcmp(item, "Colors")) {
         run_colors();
+    } else if (!strcmp(item, "Linux")) {  // K85LNX
+        k85_run_linux_menu();
     } else if (!strcmp(item, "Tools")) {
         k85_run_tools_menu();
     } else if (!strcmp(item, "System info")) {

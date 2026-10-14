@@ -70,6 +70,7 @@ idf_component_register(
          "core/shell_commands.cpp"
          "core/heavy_lock.cpp"
          "apps/k85os_menu.cpp"
+         "apps/linux_menu.cpp"
          "apps/bios_extras.cpp"
          "apps/bios_diag.cpp"
          "apps/bios_password.cpp"
