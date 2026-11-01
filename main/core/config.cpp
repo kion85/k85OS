@@ -1,4 +1,4 @@
-﻿#include "config.h"
+#include "config.h"
 #include "core/profiles.h"
 
 #include <cstdio>
@@ -12,6 +12,7 @@
 #include "mbedtls/sha256.h"
 #include "esp_wifi.h"
 #include "esp_random.h"
+#include "esp_mac.h"
 #include "nvs_flash.h"
 #include "nvs.h"
 
@@ -145,7 +146,7 @@ static void get_or_create_pepper(unsigned char pepper_out[16]) {
 
 static void get_aes_key(unsigned char key_out[16]) {
     uint8_t mac[6];
-    esp_wifi_get_mac(WIFI_IF_STA, mac);
+    if (esp_read_mac(mac, ESP_MAC_WIFI_STA) != ESP_OK) memset(mac, 0, sizeof(mac));   // K85PW2: eFuse MAC, independent of the WiFi driver state (same value as before)
 
     unsigned char pepper[16];
     get_or_create_pepper(pepper);
@@ -188,6 +189,7 @@ static void encrypt_to_hex(const char *plaintext, char *out, size_t out_size) {
     memcpy(buf, plaintext, plen);
 
     size_t padded_len = ((plen / 16) + 1) * 16;
+    if (out_size < 32 + padded_len * 2 + 1) { out[0] = 0; return; }   // K85PW1: never write past the caller buffer
     unsigned char pad_val = (unsigned char)(padded_len - plen);
     for (size_t i = plen; i < padded_len; i++) buf[i] = pad_val;
 
@@ -240,7 +242,8 @@ static void decrypt_from_hex(const char *hex, char *out, size_t out_size) {
     mbedtls_aes_free(&aes);
 
     unsigned char pad_val = plain[clen - 1];
-    size_t plain_len = (pad_val <= 16 && pad_val <= clen) ? clen - pad_val : clen;
+    if (pad_val == 0 || pad_val > 16 || pad_val > clen) { out[0] = 0; return; }   // K85PW1: wrong key or damaged data gives nothing instead of garbage
+    size_t plain_len = clen - pad_val;
     if (plain_len >= out_size) plain_len = out_size - 1;
     memcpy(out, plain, plain_len);
     out[plain_len] = 0;

@@ -38,7 +38,7 @@ if ($Publish) {
   $k85dirty = git status --porcelain --untracked-files=no
   if ($LASTEXITCODE -ne 0) { throw 'git status failed' }
   if ($k85dirty) { Write-Host $k85dirty; throw 'uncommitted changes in tracked files - commit them first, so the release matches the source' }
-  $k85new = git status --porcelain --untracked-files=all -- main CMakeLists.txt partitions.csv sdkconfig.defaults
+  $k85new = git status --porcelain --untracked-files=all -- main bootloader_components CMakeLists.txt partitions.csv sdkconfig.defaults
   if ($LASTEXITCODE -ne 0) { throw 'git status failed' }
   if ($k85new) { Write-Host $k85new; throw 'new files that are part of the build are not in git: git add them (or put them in .gitignore)' }
 }

@@ -2,6 +2,7 @@
 #include "common.h"
 #include "theme.h"
 #include "battery.h"
+#include "status_bar.h"
 #include "input.h"
 #include "sound.h"
 #include "config.h"
@@ -66,7 +67,7 @@ static void run_clock_face(void) {
                 M5.Display.setCursor((scr_w - (int)strlen(d) * 6) / 2, scr_h / 2 + 8);
                 M5.Display.print(d);
             }
-            k85_draw_battery_icon();
+            k85_status_bar_overlay();
         }
         vTaskDelay(pdMS_TO_TICKS(50));
         elapsed_ms += 50;

@@ -1,4 +1,5 @@
 #include "settings_menu.h"
+#include "look.h"
 #include "config.h"
 #include "theme.h"
 #include "power.h"
@@ -34,13 +35,13 @@
 #include <cstring>
 #include <cmath>
 
-#define K85_SETTINGS_ITEM_COUNT 21
+#define K85_SETTINGS_ITEM_COUNT 22
 #define K85_SETTINGS_BACK_IDX   (K85_SETTINGS_ITEM_COUNT - 1)
 
 static const char *k85_settings_labels[K85_SETTINGS_ITEM_COUNT] = {
     "Theme", "Brightness", "Battery mode", "Boot style",
     "Device name", "Sound volume", "WiFi", "Reset steps",
-    "Check for updates", "Screen lock", "Status bar", "BG gradient", "Lock screen", "Menu UI style", "CPU freq", "Power", "Font", "Keyboard nav", "Cursor", "Desktop", "Back",
+    "Check for updates", "Screen lock", "Status bar", "BG gradient", "Lock screen", "Menu UI style", "CPU freq", "Power", "Font", "Keyboard nav", "Cursor", "Desktop", "Look", "Back",
 };
 
 static int s_selected = 0;
@@ -578,6 +579,9 @@ static void settings_apply_item(int idx) {
             break;
         case 19:
             g_config.desktop_mode = !g_config.desktop_mode;
+            break;
+        case 20:
+            k85_look_run_settings();
             break;
         default:
             break;

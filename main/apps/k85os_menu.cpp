@@ -5,6 +5,7 @@
 #include "common.h"
 #include "theme.h"
 #include "battery.h"
+#include "status_bar.h"
 #include "power.h"
 #include "sound.h"
 #include "input.h"
@@ -680,7 +681,7 @@ static void bios_draw_list(bool with_icons) {
     M5.Display.setCursor(6, y + 8);
     M5.Display.print("A=next B=select A+B=exit");
 
-    k85_draw_battery_icon();
+    k85_status_bar_overlay();
 }
 
 static void bios_draw_grid(void) {
@@ -750,7 +751,7 @@ static void bios_draw_grid(void) {
         M5.Display.print(pg);
     }
 
-    k85_draw_battery_icon();
+    k85_status_bar_overlay();
 }
 
 static void bios_draw(void) {

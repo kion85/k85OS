@@ -1,4 +1,5 @@
 #include "list_menu.h"
+#include "look.h"
 #include "voice.h" // K85V:inc
 #include <cstdio>
 #include "theme.h"
@@ -8,6 +9,7 @@
 #include "input.h"
 #include "config.h"
 #include "../core/cursor.h"
+#include "../core/status_bar.h"
 #include "M5Unified.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -19,6 +21,21 @@
 // Универсальная иконка-фолбэк для пунктов, для которых вызывающий код не
 // передал свой icon_fn: кружок акцентного цвета с первой заглавной буквой
 // названия внутри. Работает для любого текста без ручной прорисовки.
+// K85SB1: the status bar (Settings -> Status bar) is drawn on every list screen;
+// the title is drawn on the same strip and clipped to what the bar text leaves free
+static void draw_title_and_bar(const char *title, uint32_t accent) {
+    int x0 = k85_status_bar_draw();
+    uint32_t sbbg = (g_config.sb_bg_color == 0xFFFFFFFF) ? k85_get_bg() : g_config.sb_bg_color;
+    int maxc = (x0 - 8) / 6;
+    if (maxc < 0) maxc = 0;
+    if (maxc > 39) maxc = 39;
+    char t[40];
+    snprintf(t, sizeof(t), "%.*s", maxc, title);
+    M5.Display.setTextSize(1);
+    if (k85_banner_active()) M5.Display.setTextColor(accent); else M5.Display.setTextColor(accent, sbbg);
+    M5.Display.setCursor(4, 2);
+    M5.Display.print(t);
+}
 static void draw_generic_icon(int cx, int cy, int r, const char *label, uint32_t col, uint32_t bg_col) {
     M5.Display.fillCircle(cx, cy, r, col);
     char ch = label && label[0] ? (char)toupper((unsigned char)label[0]) : '?';
@@ -48,11 +65,10 @@ static void draw_list_plain(const char *title, const char *const items[], int co
                              const char *const score_keys[], int sel, int scroll,
                              uint32_t bg, uint32_t fg, uint32_t accent) {
     int H = M5.Display.height();
-    M5.Display.fillScreen(bg);
+    k85_wall_draw(K85_WALL_SYS, bg);
     M5.Display.setTextSize(1);
     M5.Display.setTextColor(accent, bg);
-    M5.Display.setCursor(4, 2);
-    M5.Display.print(title);
+    draw_title_and_bar(title, accent);
     M5.Display.setTextSize(2);
     const int line_h = 24;
     const int start_y = 16;
@@ -68,12 +84,11 @@ static void draw_list_plain(const char *title, const char *const items[], int co
             M5.Display.setCursor(4, yy);
             M5.Display.printf(">%s", label);
         } else {
-            M5.Display.setTextColor(fg, bg);
+            k85_wall_text(fg, bg);
             M5.Display.setCursor(4, yy);
             M5.Display.printf(" %s", label);
         }
     }
-    k85_draw_battery_icon();
 }
 
 static void draw_list_icons(const char *title, const char *const items[], int count,
@@ -81,11 +96,10 @@ static void draw_list_icons(const char *title, const char *const items[], int co
                              uint32_t bg, uint32_t fg, uint32_t accent, K85IconDrawFn icon_fn) {
     int H = M5.Display.height();
     int W = M5.Display.width();
-    M5.Display.fillScreen(bg);
+    k85_wall_draw(K85_WALL_SYS, bg);
     M5.Display.setTextSize(1);
     M5.Display.setTextColor(accent, bg);
-    M5.Display.setCursor(4, 2);
-    M5.Display.print(title);
+    draw_title_and_bar(title, accent);
 
     const int line_h = 22;
     const int start_y = 16;
@@ -105,11 +119,10 @@ static void draw_list_icons(const char *title, const char *const items[], int co
         uint32_t item_fg = is_sel ? 0x000000 : fg;
         uint32_t item_bg = is_sel ? accent : bg;
         draw_item_icon(icon_fn, 14, yy + 6, 8, items[i], item_fg, item_bg);
-        M5.Display.setTextColor(item_fg, item_bg);
+        k85_wall_text(item_fg, item_bg);
         M5.Display.setCursor(26, yy + 2);
         M5.Display.print(label);
     }
-    k85_draw_battery_icon();
 }
 
 static void draw_list_grid(const char *title, const char *const items[], int count,
@@ -117,11 +130,10 @@ static void draw_list_grid(const char *title, const char *const items[], int cou
                             uint32_t bg, uint32_t fg, uint32_t accent, K85IconDrawFn icon_fn) {
     int H = M5.Display.height();
     int W = M5.Display.width();
-    M5.Display.fillScreen(bg);
+    k85_wall_draw(K85_WALL_SYS, bg);
     M5.Display.setTextSize(1);
     M5.Display.setTextColor(accent, bg);
-    M5.Display.setCursor(4, 2);
-    M5.Display.print(title);
+    draw_title_and_bar(title, accent);
 
     const int cols = 4;
     const int rows = 2;
@@ -156,7 +168,7 @@ static void draw_list_grid(const char *title, const char *const items[], int cou
         char label[64];
         format_label(label, sizeof(label), items[i], score_keys, i);
         M5.Display.setTextSize(1);
-        M5.Display.setTextColor(item_fg, item_bg);
+        k85_wall_text(item_fg, item_bg);
         char short_label[16];
         int max_chars = (cell_w - 4) / 6;
         if (max_chars > 15) max_chars = 15;
@@ -175,7 +187,6 @@ static void draw_list_grid(const char *title, const char *const items[], int cou
         M5.Display.setCursor(W - (int)strlen(pg) * 6 - 4, H - 10);
         M5.Display.print(pg);
     }
-    k85_draw_battery_icon();
 }
 
 // ---------- Курсорный режим (Settings -> Cursor: IMU) ----------
@@ -315,6 +326,7 @@ int k85_run_list_menu(const char *title, const char *const items[], int count,
     int64_t b_tap_pending_since = 0;
     int b_tap_pending_sel = 0;
     const int64_t double_tap_window_us = 350000;
+    int64_t sb_refresh_us = esp_timer_get_time();   // K85SB1
     bool chord_latched = false;   // K85CH1
     bool a_hold_active = false;
     int64_t a_hold_last = 0;
@@ -392,6 +404,11 @@ int k85_run_list_menu(const char *title, const char *const items[], int count,
                 k85_log("list_menu B pressed: title=%s sel=%d item=%s", title, b_tap_pending_sel, items[b_tap_pending_sel]);
                 if (!strcmp(items[b_tap_pending_sel], "Back")) return -1;
                 return b_tap_pending_sel;
+            }
+            // K85SB1: keep the clock of the status bar alive while the menu waits for a button
+            if (esp_timer_get_time() - sb_refresh_us >= 1000000) {
+                sb_refresh_us = esp_timer_get_time();
+                draw_title_and_bar(title, accent);
             }
             vTaskDelay(pdMS_TO_TICKS(30));
         }

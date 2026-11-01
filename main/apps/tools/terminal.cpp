@@ -5,6 +5,7 @@
 #include "input.h"
 #include "power.h"
 #include "battery.h"
+#include "status_bar.h"
 #include "common.h"
 #include "rtc_ntp.h"
 #include "wifi.h"
@@ -154,7 +155,7 @@ static void terminal_show_output_scrollable(const char *raw_text) {
         } else {
             M5.Display.print("A+B=back");
         }
-        k85_draw_battery_icon();
+        k85_status_bar_overlay();
     };
 
     redraw();

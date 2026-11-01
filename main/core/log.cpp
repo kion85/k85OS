@@ -3,11 +3,14 @@
 #include <cstdio>
 #include <cstring>
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 static char s_lines[K85_LOG_MAX][K85_LOG_LINE_LEN];
 static int s_count = 0;       // сколько реально заполнено (до K85_LOG_MAX)
 static int s_head = 0;        // индекс следующей записи для перезаписи
 static int64_t s_boot_us = 0;
+static portMUX_TYPE s_log_mux = portMUX_INITIALIZER_UNLOCKED;   // K85LOG1
 
 void k85_log_init(void) {
     s_boot_us = esp_timer_get_time();
@@ -30,10 +33,16 @@ void k85_log(const char *fmt, ...) {
     snprintf(line, sizeof(line), "[%llds] %s",
              (long long)elapsed_s, msg);
     // безопасно укладываем в фиксированный буфер строки лога
-    snprintf(s_lines[s_head], K85_LOG_LINE_LEN, "%s", line);
-
+    int k85_slot;
+    portENTER_CRITICAL(&s_log_mux);   // K85LOG1: two tasks must never get the same slot
+    k85_slot = s_head;
     s_head = (s_head + 1) % K85_LOG_MAX;
     if (s_count < K85_LOG_MAX) s_count++;
+    portEXIT_CRITICAL(&s_log_mux);
+    snprintf(s_lines[k85_slot], K85_LOG_LINE_LEN, "%s", line);
+
+    
+    
 }
 #pragma GCC diagnostic pop
 

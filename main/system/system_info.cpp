@@ -1,6 +1,7 @@
 #include "system_info.h"
 #include "theme.h"
 #include "battery.h"
+#include "status_bar.h"
 #include "power.h"
 #include "input.h"
 #include "sound.h"
@@ -20,7 +21,7 @@
 #include <cstdio>
 
 #define K85_FW_NAME "k85OS"
-#define K85_FW_VERSION "v8.0"
+#define K85_FW_VERSION "v8.2"
 
 // Причина последнего сброса/загрузки - ESP-IDF хранит её в RTC-памяти,
 // переживает даже панику/краш, отдельное хранилище не требуется.
@@ -153,7 +154,7 @@ void k85_run_system_info(void) {
         M5.Display.setCursor(10, M5.Display.height() - 12);
         M5.Display.print("B=page A+B=back");
 
-        k85_draw_battery_icon();
+        k85_status_bar_overlay();
 
         k85_input_update();
         if (k85_ab_held(500)) {

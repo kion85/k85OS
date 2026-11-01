@@ -1,6 +1,7 @@
-﻿#include "gpio_control.h"
+#include "gpio_control.h"
 #include "theme.h"
 #include "battery.h"
+#include "status_bar.h"
 #include "power.h"
 #include "input.h"
 #include "common.h"
@@ -66,7 +67,7 @@ void k85_run_gpio_test(void) {
         M5.Display.print("A=next  B=toggle/read");
         M5.Display.setCursor(4, H - 14);
         M5.Display.print("2xA(<400ms)=mode  A+B=exit");
-        k85_draw_battery_icon();
+        k85_status_bar_overlay();
     };
 
     auto apply_mode = [&]() {

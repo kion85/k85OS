@@ -1,6 +1,7 @@
-﻿#include "air_mouse.h"
+#include "air_mouse.h"
 #include "theme.h"
 #include "battery.h"
+#include "status_bar.h"
 #include "power.h"
 #include "input.h"
 #include "common.h"
@@ -40,7 +41,7 @@ void k85_run_air_mouse(void) {
         M5.Display.setTextColor(0xAAAAAA, bg);
         M5.Display.setCursor(4, H - 12);
         M5.Display.print("tilt=move A=left B=right hold A+B=exit");
-        k85_draw_battery_icon();
+        k85_status_bar_overlay();
     };
 
     draw_crosshair(cursor_x, cursor_y, false, false);

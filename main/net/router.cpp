@@ -325,7 +325,7 @@ static void forward_to_upstream(int sock, const struct sockaddr_in *client_addr,
 
     sendto(up_sock, req, req_len, 0, (const struct sockaddr *)&up_addr, sizeof(up_addr));
 
-    uint8_t resp[512];
+    static uint8_t resp[1500];  // K85DNS1: EDNS answers are larger than 512 bytes
     int r = recv(up_sock, resp, sizeof(resp), 0);
     if (r > 0) {
         sendto(sock, resp, r, 0, (const struct sockaddr *)client_addr, sizeof(*client_addr));
@@ -342,7 +342,14 @@ static void dns_filter_task(void *arg) {
 
     struct sockaddr_in addr = {};
     addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    // K85DNS1: answer only on the hotspot (AP) address, not on the uplink side as an open resolver
+    uint32_t k85_bind_ip = htonl(INADDR_ANY);
+    for (int k85_i = 0; k85_i < 20; k85_i++) {
+        esp_netif_ip_info_t k85_ipi = {};
+        if (s_ap_netif && esp_netif_get_ip_info(s_ap_netif, &k85_ipi) == ESP_OK && k85_ipi.ip.addr != 0) { k85_bind_ip = k85_ipi.ip.addr; break; }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    addr.sin_addr.s_addr = k85_bind_ip;
     addr.sin_port = htons(53);
     bind(sock, (struct sockaddr *)&addr, sizeof(addr));
 

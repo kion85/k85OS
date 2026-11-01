@@ -1,6 +1,7 @@
-﻿#include "melodies.h"
+#include "melodies.h"
 #include "theme.h"
 #include "battery.h"
+#include "status_bar.h"
 #include "power.h"
 #include "input.h"
 #include "common.h"
@@ -117,7 +118,7 @@ static void run_tone_composer(void) {
         M5.Display.setTextColor(0xAAAAAA, bg);
         M5.Display.setCursor(4, H - 12);
         M5.Display.printf("%d/20 notes", seq_len);
-        k85_draw_battery_icon();
+        k85_status_bar_overlay();
     };
 
     draw();

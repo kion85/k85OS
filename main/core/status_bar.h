@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <stdint.h>
 
 // Биты sb_flags — каждый элемент статус-бара главного меню включается/выключается отдельно.
@@ -16,4 +16,7 @@
 
 // Рисует статус-бар главного меню по текущим настройкам g_config.sb_flags / sb_bg_color.
 // Вызывать вместо k85_draw_battery_icon() ТОЛЬКО в главном меню (menu.cpp).
-void k85_status_bar_draw(void);
+// K85SB1: returns the x position where the bar text starts (the screen width when the bar is empty)
+int k85_status_bar_draw(void);
+// K85SB3: same bar for screens that draw their own UI (paints only a patch behind its own text)
+void k85_status_bar_overlay(void);

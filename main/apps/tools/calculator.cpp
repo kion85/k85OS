@@ -1,6 +1,7 @@
-﻿#include "calculator.h"
+#include "calculator.h"
 #include "theme.h"
 #include "battery.h"
+#include "status_bar.h"
 #include "power.h"
 #include "input.h"
 
@@ -150,7 +151,7 @@ void k85_run_calculator(void) {
                 M5.Display.print(label);
             }
         }
-        k85_draw_battery_icon();
+        k85_status_bar_overlay();
     };
 
     draw();

@@ -1,79 +1,99 @@
-﻿#include "i2c_scanner.h"
+#pragma GCC diagnostic ignored "-Wformat-truncation"
+// K85I2C1: the scanner uses the I2C buses that M5Unified already owns (Grove port and the internal bus),
+// so it works on any board without knowing the pins.
+#include "i2c_scanner.h"
 #include "common.h"
 #include "text_input.h"
+#include "list_menu.h"
+#include "input.h"
 #include "log.h"
 
-#include "driver/i2c_master.h"
+#include "M5Unified.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
 #include <cstdio>
 #include <cstring>
 
 struct KnownI2cDevice { uint8_t addr; const char *name; };
 
-// Та же таблица, что и KNOWN_I2C_DEVICES в оригинале
+// several chips share some addresses, so the first match is only a hint
 static const KnownI2cDevice KNOWN_I2C_DEVICES[] = {
-    {0x68, "MPU6886/MPU9250 (IMU)"}, {0x10, "BMM150 (Magneto)"},
-    {0x75, "IP5306 (Power)"},        {0x6C, "SH200Q (IMU)"},
-    {0x34, "AXP192 (Power)"},        {0x51, "BM8563/DS3231 (RTC)"},
-    {0x38, "FT6336U (Touch)"},       {0x2E, "CHSC6540 (Touch)"},
-    {0x18, "ES8311 (Audio)"},        {0x5C, "DHT12 (Temp/Hum)"},
-    {0x77, "BMP280 (Baro)"},         {0x76, "BME280 (Env)"},
-    {0x0C, "BMP388 (Baro)"},         {0x1E, "HMC5883L (Magneto)"},
-    {0xEC, "SSD1306 (OLED)"},        {0x3C, "SSD1306 (OLED alt)"},
-    {0x48, "ADS1115 (ADC)"},         {0x4A, "ADS1115 (ADC alt)"},
+    {0x18, "ES8311 audio codec"},     {0x1D, "ADXL345 (accel)"},
+    {0x20, "PCF8574 / MCP23017"},     {0x23, "BH1750 (light)"},
+    {0x29, "VL53L0X / TCS34725"},     {0x38, "AHT20 / FT6336U"},
+    {0x39, "APDS-9960"},              {0x3C, "SSD1306 (OLED)"},
+    {0x3D, "SSD1306 (OLED alt)"},     {0x40, "INA219 / SI7021"},
+    {0x44, "SHT3x"},                  {0x45, "SHT3x alt"},
+    {0x48, "ADS1115 / PCF8591"},      {0x4A, "ADS1115 alt"},
+    {0x50, "EEPROM (AT24C)"},         {0x51, "BM8563 / PCF8563 (RTC)"},
+    {0x53, "ADXL345 alt"},            {0x57, "MAX30102 / EEPROM"},
+    {0x5A, "MLX90614 / CCS811"},      {0x62, "SCD4x (CO2)"},
+    {0x68, "IMU / DS3231 (RTC)"},     {0x69, "IMU alt (BMI270)"},
+    {0x70, "TCA9548A (mux)"},         {0x76, "BME280 / BMP280"},
+    {0x77, "BME280 / BMP388"},
 };
 #define KNOWN_I2C_COUNT (int)(sizeof(KNOWN_I2C_DEVICES) / sizeof(KNOWN_I2C_DEVICES[0]))
 
 static const char *known_i2c_name(uint8_t addr) {
     for (int i = 0; i < KNOWN_I2C_COUNT; i++)
         if (KNOWN_I2C_DEVICES[i].addr == addr) return KNOWN_I2C_DEVICES[i].name;
-    return "Unknown";
+    return "unknown";
 }
 
-void k85_run_i2c_scan(void) {
-    // TODO: SDA=21/SCL=22 — как в оригинале (I2C(0, scl=22, sda=21)). Если у твоей платы
-    // (ESP32-S3, не оригинальный ESP32 M5Stack Core) внутренняя шина IMU/RTC на других
-    // пинах — поправь GPIO_NUM_21/22 ниже.
-    i2c_master_bus_config_t bus_config = {};
-    bus_config.i2c_port = I2C_NUM_0;
-    bus_config.sda_io_num = GPIO_NUM_1;  // TODO: подтверди реальный SDA для твоей платы
-    bus_config.scl_io_num = GPIO_NUM_2;  // TODO: подтверди реальный SCL для твоей платы
-    bus_config.clk_source = I2C_CLK_SRC_DEFAULT;
-    bus_config.glitch_ignore_cnt = 7;
-    bus_config.flags.enable_internal_pullup = true;
+static void wait_ab(void) {
+    while (true) {
+        k85_input_update();
+        if (k85_ab_held(500)) { k85_wait_ab_release(); return; }
+        vTaskDelay(pdMS_TO_TICKS(30));
+    }
+}
 
-    i2c_master_bus_handle_t bus_handle;
-    if (i2c_new_master_bus(&bus_config, &bus_handle) != ESP_OK) {
-        k85_log("I2C bus init failed");
-        k85_show_message("I2C init failed\nA+B=back");
+template <typename BUS>
+static void scan_bus(BUS &bus, const char *title) {
+    bool was_enabled = bus.isEnabled();
+    if (!was_enabled && !bus.begin()) {
+        k85_log("I2C bus init failed (%s)", title);
+        k85_show_message("I2C bus not available\nA+B=back");
+        wait_ab();
         return;
     }
 
     static char lines_buf[40][32];
     static const char *lines[40];
     int n_lines = 0;
-
-    static uint8_t found_addrs[32];
+    static uint8_t found[40];
     int found_n = 0;
-    for (int addr = 1; addr < 127 && found_n < 32; addr++) {
-        esp_err_t err = i2c_master_probe(bus_handle, addr, 50);
-        if (err == ESP_OK) found_addrs[found_n++] = (uint8_t)addr;
+
+    for (int addr = 0x08; addr <= 0x77 && found_n < 38; addr++) {
+        if (bus.scanID((uint8_t)addr, 100000)) found[found_n++] = (uint8_t)addr;
     }
-    i2c_del_master_bus(bus_handle);
+    int sda = (int)bus.getSDA(), scl = (int)bus.getSCL();
+    if (!was_enabled) bus.release();
 
-    snprintf(lines_buf[n_lines], 32, "I2C Scan: %d found", found_n);
+    char k85_tmp[64];   // K85I2C2: build the line in a larger buffer, then cut it to the screen width
+    snprintf(k85_tmp, sizeof(k85_tmp), "SDA:%d SCL:%d  found:%d", sda, scl, found_n);
+    snprintf(lines_buf[n_lines], 32, "%.31s", k85_tmp);
     lines[n_lines] = lines_buf[n_lines]; n_lines++;
-
     if (found_n == 0) {
         snprintf(lines_buf[n_lines], 32, "No devices found");
         lines[n_lines] = lines_buf[n_lines]; n_lines++;
     } else {
         for (int i = 0; i < found_n && n_lines < 40; i++) {
-            snprintf(lines_buf[n_lines], 32, "0x%02X  %s", found_addrs[i], known_i2c_name(found_addrs[i]));
+            snprintf(lines_buf[n_lines], 32, "0x%02X  %.22s", found[i], known_i2c_name(found[i]));
             lines[n_lines] = lines_buf[n_lines]; n_lines++;
         }
     }
-
-    k85_area_show(lines, n_lines, "I2C SCANNER");
+    k85_area_show(lines, n_lines, title);
 }
 
-
+void k85_run_i2c_scan(void) {
+    static const char *items[] = { "Grove port (A)", "Internal bus", "Back" };
+    while (true) {
+        int idx = k85_run_list_menu("I2C SCANNER", items, 3, nullptr);
+        if (idx < 0 || idx == 2) return;
+        k85_show_message("Scanning...");
+        if (idx == 0) scan_bus(M5.Ex_I2C, "GROVE PORT");
+        else scan_bus(M5.In_I2C, "INTERNAL BUS");
+    }
+}

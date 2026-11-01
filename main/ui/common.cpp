@@ -1,8 +1,10 @@
 #include "common.h"
+#include "look.h"
 #include "voice.h" // K85V:inc
 #include <cstdio>
 #include "theme.h"
 #include "battery.h"
+#include "../core/status_bar.h"   // K85SB2
 #include "M5Unified.h"
 #include <cstring>
 #include <cmath>
@@ -15,13 +17,14 @@ k85_voice_say(text); // K85V:msg
     for (const char *p = text; *p; ++p) {
         if (*p == '\n') newline_count++;
     }
-    M5.Display.fillScreen(bg);
+    k85_wall_draw(K85_WALL_SYS, bg);
     M5.Display.setTextSize(2);
-    M5.Display.setTextColor(fg, bg);
+    k85_wall_text(fg, bg);
     char buf[256];
     strncpy(buf, text, sizeof(buf) - 1);
     buf[sizeof(buf) - 1] = '\0';
     int y = M5.Display.height() / 2 - 8 - (newline_count * 10);
+    if (y < 14) y = 14;   // K85SB2: keep the text below the status bar strip
     char *saveptr = nullptr;
     char *line = strtok_r(buf, "\n", &saveptr);
     while (line) {
@@ -30,7 +33,7 @@ k85_voice_say(text); // K85V:msg
         y += 20;
         line = strtok_r(nullptr, "\n", &saveptr);
     }
-    k85_draw_battery_icon();
+    k85_status_bar_draw();   // K85SB2: same bar and settings as in the menus
 }
 
 // Векторные иконки по названию пункта меню - изначально жили только в

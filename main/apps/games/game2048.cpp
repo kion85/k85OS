@@ -2,6 +2,7 @@
 #include "config.h"
 #include "theme.h"
 #include "battery.h"
+#include "status_bar.h"
 #include "power.h"
 #include "input.h"
 #include "common.h"
@@ -214,7 +215,7 @@ static bool run_2048_once(void) {
         M5.Display.setTextColor(0xAAAAAA, bg);
         M5.Display.setCursor(4, H - 12);
         M5.Display.print("A=dir B=move A+B=exit");
-        k85_draw_battery_icon();
+        k85_status_bar_overlay();
     };
 
     auto game_over_screen = [&](const char *score_text) -> bool {

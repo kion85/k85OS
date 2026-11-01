@@ -1,4 +1,5 @@
 #include "menu.h"
+#include "look.h"
 #include "voice.h" // K85V:inc
 #include <cstdio>
 #include "common.h"
@@ -66,6 +67,7 @@ static int get_filtered_menu(const char *out[], int max_out) {
 }
 
 static void draw_menu_background(uint32_t bg, uint32_t accent) {
+    if (k85_wall_active(K85_WALL_MAIN)) { k85_wall_draw(K85_WALL_MAIN, bg); return; }   // K85LOOK2
     if (!g_config.bg_gradient_enabled) {
         M5.Display.fillScreen(bg);
         return;
@@ -190,7 +192,7 @@ static void draw_menu_list(void) {
     if (count == 0) {
         draw_menu_background(bg, accent);
         M5.Display.setTextSize(2);
-        M5.Display.setTextColor(fg, bg);
+        k85_wall_text_main(fg, bg);
         M5.Display.setCursor(10, h / 2 - 8);
         M5.Display.print("No items");
         k85_status_bar_draw();
@@ -222,7 +224,7 @@ static void draw_menu_list(void) {
             M5.Display.setCursor(4, yy);
             M5.Display.printf(">%s", items[i]);
         } else {
-            M5.Display.setTextColor(fg, bg);
+            k85_wall_text_main(fg, bg);
             M5.Display.setCursor(4, yy);
             M5.Display.printf(" %s", items[i]);
         }
@@ -264,7 +266,7 @@ static void draw_menu_list_icons(void) {
     if (count == 0) {
         draw_menu_background(bg, accent);
         M5.Display.setTextSize(2);
-        M5.Display.setTextColor(fg, bg);
+        k85_wall_text_main(fg, bg);
         M5.Display.setCursor(10, h / 2 - 8);
         M5.Display.print("No items");
         k85_status_bar_draw();
@@ -301,7 +303,7 @@ static void draw_menu_list_icons(void) {
         uint32_t item_fg = sel ? 0x000000 : fg;
         uint32_t item_bg = sel ? accent : bg;
         draw_menu_icon(14, yy + 6, 8, items[i], item_fg);
-        M5.Display.setTextColor(item_fg, item_bg);
+        k85_wall_text_main(item_fg, item_bg);
         M5.Display.setCursor(26, yy + 2);
         M5.Display.print(items[i]);
     }
@@ -328,7 +330,7 @@ static void draw_menu_grid(void) {
     if (count == 0) {
         draw_menu_background(bg, accent);
         M5.Display.setTextSize(2);
-        M5.Display.setTextColor(fg, bg);
+        k85_wall_text_main(fg, bg);
         M5.Display.setCursor(10, h / 2 - 8);
         M5.Display.print("No items");
         k85_status_bar_draw();
@@ -369,7 +371,7 @@ static void draw_menu_grid(void) {
         draw_menu_icon(cx, cy, 12, items[i], sel ? 0x000000 : fg);
 
         M5.Display.setTextSize(1);
-        M5.Display.setTextColor(sel ? 0x000000 : fg, sel ? accent : bg);
+        k85_wall_text_main(sel ? 0x000000 : fg, sel ? accent : bg);
         char short_label[16];
         int max_chars = (cell_w - 4) / 6;
         if (max_chars > 15) max_chars = 15;
@@ -661,7 +663,7 @@ static void draw_menu_desktop_icons(const char *const items[], int count) {
 
     if (count == 0) {
         M5.Display.setTextSize(2);
-        M5.Display.setTextColor(fg, bg);
+        k85_wall_text_main(fg, bg);
         M5.Display.setCursor(10, h / 2 - 8);
         M5.Display.print("No items");
         draw_desktop_taskbar();
@@ -700,7 +702,7 @@ static void draw_menu_desktop_icons(const char *const items[], int count) {
         draw_menu_icon(cx, cy, 12, items[i], sel ? 0x000000 : fg);
 
         M5.Display.setTextSize(1);
-        M5.Display.setTextColor(sel ? 0x000000 : fg, sel ? accent : bg);
+        k85_wall_text_main(sel ? 0x000000 : fg, sel ? accent : bg);
         char short_label[16];
         int max_chars = (cell_w - 4) / 6;
         if (max_chars > 15) max_chars = 15;

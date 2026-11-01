@@ -6,6 +6,7 @@
 #include "log.h"
 #include "theme.h"
 #include "battery.h"
+#include "status_bar.h"
 
 #include "M5Unified.h"
 #include "esp_websocket_client.h"
@@ -530,7 +531,7 @@ static void draw_ui(void) {
     M5.Display.setCursor(4, H - 10);
     M5.Display.print("A:-10/mode B:+10/-vol A+B=exit");
 
-    k85_draw_battery_icon();
+    k85_status_bar_overlay();
 }
 
 static void run_session(void) {

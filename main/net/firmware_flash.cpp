@@ -286,6 +286,7 @@ bool k85_fwflash_from_url(const char *bin_url, const char *sig_url, k85_fwflash_
 #include <cstring>
 #include "esp_heap_caps.h"
 #include "list_menu.h"
+#include "status_bar.h"
 #include "text_input.h"
 #include "M5Unified.h"
 #include "theme.h"
@@ -611,8 +612,9 @@ static void tp_screen(const char *text) {
     M5.Display.setTextSize(1);
     M5.Display.setTextWrap(true);
     M5.Display.setTextColor(0xFFFFFF, bg);
-    M5.Display.setCursor(3, 4);
+    M5.Display.setCursor(3, 16);
     M5.Display.print(text);
+    k85_status_bar_overlay();
 }
 
 static void tp_progress(int pc) {

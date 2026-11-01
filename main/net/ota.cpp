@@ -186,7 +186,7 @@ static void ota_check_task(void *arg) {
 }
 
 void k85_ota_start_background_check(uint32_t interval_ms) {
-    s_interval_ms = interval_ms;
+    s_interval_ms = (interval_ms < 60000) ? 60000 : interval_ms;   // K85OTA1: 0 would hit GitHub in a tight loop
     xTaskCreate(ota_check_task, "ota_check", 8192, nullptr, 3, nullptr);
 }
 

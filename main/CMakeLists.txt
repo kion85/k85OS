@@ -19,6 +19,8 @@ idf_component_register(
          "ui/common.cpp"
          "ui/menu.cpp"
          "ui/lock_screen.cpp"
+         "ui/look.cpp"
+         "ui/lock_fx.cpp"
          "ui/quick_settings.cpp"
          "ui/settings_menu.cpp"
          "ui/power_menu.cpp"

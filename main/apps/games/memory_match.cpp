@@ -1,6 +1,7 @@
 #include "memory_match.h"
 #include "theme.h"
 #include "battery.h"
+#include "status_bar.h"
 #include "input.h"
 #include "common.h"
 #include "config.h"
@@ -82,7 +83,7 @@ static void draw_memory(const uint8_t *vals, const bool *revealed, const bool *m
     M5.Display.setTextColor(0xAAAAAA, bg);
     M5.Display.setCursor(4, H - 10);
     M5.Display.print("A=next B=flip A+B=exit");
-    k85_draw_battery_icon();
+    k85_status_bar_overlay();
 }
 
 void k85_run_memory_match(void) {

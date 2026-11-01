@@ -3,6 +3,7 @@
 #include "common.h"
 #include "theme.h"
 #include "battery.h"
+#include "status_bar.h"
 #include "input.h"
 #include "text_input.h"
 #include "esp_log.h"
@@ -325,8 +326,9 @@ static void ir_msg(const char *text) {
     M5.Display.setTextSize(1);
     M5.Display.setTextWrap(true);
     M5.Display.setTextColor(0xFFFFFF, bg);
-    M5.Display.setCursor(3, 4);
+    M5.Display.setCursor(3, 16);
     M5.Display.print(text);
+    k85_status_bar_overlay();
 }
 
 static void ir_toast(const char *text, int ms = 700) {
@@ -675,6 +677,7 @@ static void rx_draw(uint32_t seen, uint32_t noise, const char *status) {
     M5.Display.setTextColor(0xAAAAAA, bg);
     M5.Display.setCursor(3, M5.Display.height() - 12);
     M5.Display.print("A+B = back");
+    k85_status_bar_overlay();
 }
 
 // returns true to keep listening, false to leave IR RX

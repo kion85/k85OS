@@ -1,6 +1,7 @@
 #include "pong.h"
 #include "theme.h"
 #include "battery.h"
+#include "status_bar.h"
 #include "input.h"
 #include "common.h"
 #include "config.h"
@@ -40,7 +41,7 @@ static void draw_pong(int W, int H, uint32_t bg, uint32_t fg,
     M5.Display.fillRect(ai_x, (int)ai_y, paddle_w, paddle_h, fg);
     M5.Display.fillRect((int)ball_x - ball_size / 2, (int)ball_y - ball_size / 2, ball_size, ball_size, fg);
 
-    k85_draw_battery_icon();
+    k85_status_bar_overlay();
 }
 
 void k85_run_pong(void) {

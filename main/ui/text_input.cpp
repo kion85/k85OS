@@ -2,6 +2,7 @@
 #include "esp_attr.h"
 #include "theme.h"
 #include "battery.h"
+#include "status_bar.h"
 #include "power.h"
 #include "input.h"
 #include "config.h"
@@ -108,7 +109,7 @@ bool k85_text_input(const char *prompt, const char *initial, char *out, size_t o
             int hx = (W - (int)strlen(hint) * 6) / 2;
             M5.Display.setCursor(hx, H / 2);
             M5.Display.print(hint);
-            k85_draw_battery_icon();
+            k85_status_bar_overlay();
             return;
         }
 
@@ -136,7 +137,7 @@ bool k85_text_input(const char *prompt, const char *initial, char *out, size_t o
                 M5.Display.print(label);
             }
         }
-        k85_draw_battery_icon();
+        k85_status_bar_overlay();
     };
 
     draw();
@@ -304,7 +305,7 @@ bool k85_text_input_multiline(const char *prompt, const char *initial, char *out
             int hx = (W - (int)strlen(hint) * 6) / 2;
             M5.Display.setCursor(hx, H / 2);
             M5.Display.print(hint);
-            k85_draw_battery_icon();
+            k85_status_bar_overlay();
             return;
         }
 
@@ -332,7 +333,7 @@ bool k85_text_input_multiline(const char *prompt, const char *initial, char *out
                 M5.Display.print(label);
             }
         }
-        k85_draw_battery_icon();
+        k85_status_bar_overlay();
     };
 
     draw();
@@ -467,7 +468,7 @@ void k85_area_show(const char *const lines[], int count, const char *title) {
     M5.Display.setTextColor(0xAAAAAA, bg);
     M5.Display.setCursor(4, M5.Display.height() - 12);
     M5.Display.print("A+B=back");
-    k85_draw_battery_icon();
+    k85_status_bar_overlay();
 
     while (true) {
         k85_input_update();

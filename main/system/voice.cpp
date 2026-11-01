@@ -148,6 +148,10 @@ void k85_voice_set(bool on) {
     }
 }
 
+// K85VOICE1: the pack grew past the old size cap (every download stopped at about 3.4 MB and was retried 60 times)
+#undef VOICE_MAX_BYTES
+#define VOICE_MAX_BYTES (6u * 1024u * 1024u)
+static volatile bool s_voice_giveup = false;
 struct DlCtx { uint8_t *buf; size_t len, cap; bool fail; };
 
 static esp_err_t dl_evt(esp_http_client_event_t *e) {
@@ -156,9 +160,9 @@ static esp_err_t dl_evt(esp_http_client_event_t *e) {
         esp_http_client_get_status_code(e->client) == 200) {
         if (c->len + e->data_len > c->cap) {
             size_t ncap = c->cap + 256 * 1024;
-            if (ncap > VOICE_MAX_BYTES) { c->fail = true; return ESP_OK; }
+            if (ncap > VOICE_MAX_BYTES) { ESP_LOGW("k85_voice", "pack is bigger than the %u byte limit (%u received so far), giving up", (unsigned)VOICE_MAX_BYTES, (unsigned)c->len); s_voice_giveup = true; c->fail = true; return ESP_OK; }
             uint8_t *nb = (uint8_t *)heap_caps_realloc(c->buf, ncap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-            if (!nb) { c->fail = true; return ESP_OK; }
+            if (!nb) { ESP_LOGW("k85_voice", "no PSRAM for the pack (%u bytes free)", (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM)); c->fail = true; return ESP_OK; }
             c->buf = nb; c->cap = ncap;
         }
         memcpy(c->buf + c->len, e->data, e->data_len);
@@ -191,7 +195,7 @@ bool k85_voice_download(const char *url) {
 static void pack_task(void *) {
     remove("/littlefs/voice.tmp");             // leftover from the old flash-based version
     remove("/littlefs/voice.pak");
-    for (int i = 0; i < 60 && !s_pak; i++) {
+    for (int i = 0; i < 60 && !s_pak && !s_voice_giveup; i++) {
         wifi_ap_record_t ap;
         if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
             ESP_LOGI("k85_voice", "download start: internal free=%u largest=%u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));

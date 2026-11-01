@@ -933,6 +933,7 @@ static void cmd_tar(int argc, char **argv, Out *o) {
         char name[120];
         snprintf(name, sizeof(name), "%.100s", (const char *)h);
         uint32_t size = tar_parse_octal(h + 124, 12);
+        if (size > (64u << 20)) { o_puts(o, "tar: entry too large, stopping\r\n"); bad = true; break; }   // K85TAR1: 32-bit long overflow in fseek could loop forever
         char type = (char)h[156];
         bool is_d = (type == '5');
         size_t nl = strlen(name);

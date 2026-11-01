@@ -36,11 +36,13 @@ static bool hex_to_bytes(const char *hex, size_t hex_len, unsigned char *out, si
 // 64 байта на выходе: [0..32) = verifier (проверка правильности пароля),
 // [32..64) = AES-256 ключ. Один PBKDF2-проход вместо двух (дороговат -
 // 10000 итераций, лучше не гонять его два раза подряд на каждый unlock).
-static void derive(const char *password, const unsigned char *salt, unsigned char *out64) {
-    mbedtls_pkcs5_pbkdf2_hmac_ext(MBEDTLS_MD_SHA256,
+static bool derive(const char *password, const unsigned char *salt, unsigned char *out64) {   // K85PW1: a failed derivation is never used
+    int rc = mbedtls_pkcs5_pbkdf2_hmac_ext(MBEDTLS_MD_SHA256,
                                   (const unsigned char *)password, strlen(password),
                                   salt, PWMGR_SALT_BYTES, PWMGR_ITERATIONS,
                                   PWMGR_DERIVE_BYTES, out64);
+    if (rc != 0) { memset(out64, 0, PWMGR_DERIVE_BYTES); return false; }
+    return true;
 }
 
 bool k85_pwmgr_is_setup(void) {
@@ -52,7 +54,7 @@ bool k85_pwmgr_setup_master(const char *master_password) {
     esp_fill_random(salt, sizeof(salt));
 
     unsigned char derived[PWMGR_DERIVE_BYTES];
-    derive(master_password, salt, derived);
+    if (!derive(master_password, salt, derived)) { memset(derived, 0, sizeof(derived)); return false; }
 
     if (sizeof(g_config.pwmgr_master_verifier) < (PWMGR_SALT_BYTES + PWMGR_VERIFIER_BYTES) * 2 + 1) {
         return false; // не должно случиться, буфер в конфиге размечен под этот размер
@@ -61,6 +63,7 @@ bool k85_pwmgr_setup_master(const char *master_password) {
     bytes_to_hex(derived, PWMGR_VERIFIER_BYTES, g_config.pwmgr_master_verifier + PWMGR_SALT_BYTES * 2);
 
     memcpy(s_session_key, derived + PWMGR_VERIFIER_BYTES, PWMGR_KEY_BYTES);
+    memset(derived, 0, sizeof(derived));
     s_unlocked = true;
 
     k85_config_save();
@@ -78,14 +81,18 @@ bool k85_pwmgr_unlock(const char *master_password) {
     if (!hex_to_bytes(stored + PWMGR_SALT_BYTES * 2, PWMGR_VERIFIER_BYTES * 2, stored_verifier, sizeof(stored_verifier))) return false;
 
     unsigned char derived[PWMGR_DERIVE_BYTES];
-    derive(master_password, salt, derived);
+    if (!derive(master_password, salt, derived)) { memset(derived, 0, sizeof(derived)); return false; }
 
-    if (memcmp(derived, stored_verifier, PWMGR_VERIFIER_BYTES) != 0) {
+    unsigned char k85_diff = 0;   // constant-time compare
+    for (int k85_i = 0; k85_i < PWMGR_VERIFIER_BYTES; k85_i++) k85_diff |= (unsigned char)(derived[k85_i] ^ stored_verifier[k85_i]);
+    if (k85_diff != 0) {
+        memset(derived, 0, sizeof(derived));
         k85_log("pwmgr: unlock failed (wrong master password)");
         return false;
     }
 
     memcpy(s_session_key, derived + PWMGR_VERIFIER_BYTES, PWMGR_KEY_BYTES);
+    memset(derived, 0, sizeof(derived));
     s_unlocked = true;
     return true;
 }

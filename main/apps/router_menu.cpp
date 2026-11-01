@@ -14,6 +14,7 @@
 #include "M5Unified.h"
 #include "esp_timer.h"
 #include "esp_random.h"
+#include "esp_netif.h"
 #include "esp_heap_caps.h"
 #include "esp_netif.h"
 #include "lwip/sockets.h"
@@ -79,7 +80,12 @@ static bool get_query_param(const char *query, const char *key, char *out, size_
 static bool check_key(const char *query) {
     char key[32] = {0};
     if (!get_query_param(query, "key", key, sizeof(key))) return false;
-    return strcmp(key, s_web_key) == 0;
+    return [&]() -> bool {   // K85CT1: constant-time compare, a wrong key takes the same time as a close one
+        size_t a = strlen(key), b = strlen(s_web_key);
+        unsigned char d = (unsigned char)(a != b);
+        for (size_t i = 0; i < b; i++) d |= (unsigned char)((unsigned char)key[i < a ? i : 0] ^ (unsigned char)s_web_key[i]);
+        return b > 0 && d == 0;
+    }();
 }
 
 static void send_response(int fd, const char *status, const char *body) {
@@ -201,6 +207,16 @@ static void build_status_page(char *out, size_t out_size, const char *ssid, bool
     if (used + tail_len < out_size) memcpy(out + used, tail, tail_len + 1);
 }
 
+// K85RT1: only plain characters may be stored; the values are printed into the admin page unescaped
+static bool rt_chars_ok(const char *s, const char *extra) {
+    if (!s[0]) return false;
+    for (; *s; s++) {
+        char c = *s;
+        bool ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || strchr(extra, c) != nullptr;
+        if (!ok) return false;
+    }
+    return true;
+}
 static void handle_router_connection(int conn_fd, const char *ssid, bool is_guest) {
     static EXT_RAM_BSS_ATTR char req_buf[2048];
     long req_len = 0;
@@ -239,7 +255,7 @@ static void handle_router_connection(int conn_fd, const char *ssid, bool is_gues
         char mac[18] = "*", domain[64] = {0};
         get_query_param(query, "mac", mac, sizeof(mac));
         get_query_param(query, "domain", domain, sizeof(domain));
-        if (strlen(mac) > 0 && strlen(domain) > 0) k85_router_dns_rule_add(mac, domain);
+        if (rt_chars_ok(mac, ":*") && rt_chars_ok(domain, ".-_")) k85_router_dns_rule_add(mac, domain);
         char redir[64];
         snprintf(redir, sizeof(redir), "/?key=%s", s_web_key);
         send_redirect(conn_fd, redir);
@@ -253,7 +269,7 @@ static void handle_router_connection(int conn_fd, const char *ssid, bool is_gues
     } else if (strcmp(path, "/acl/add") == 0) {
         char mac[18] = {0};
         get_query_param(query, "mac", mac, sizeof(mac));
-        if (strlen(mac) == 17) k85_router_acl_add(mac);
+        if (strlen(mac) == 17 && rt_chars_ok(mac, ":")) k85_router_acl_add(mac);
         char redir[64];
         snprintf(redir, sizeof(redir), "/?key=%s", s_web_key);
         send_redirect(conn_fd, redir);
@@ -306,7 +322,12 @@ static void run_router_start(bool is_guest) {
     setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
     struct sockaddr_in addr = {};
     addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    {   // K85RT1: the admin panel listens on the hotspot (AP) address only, not on the uplink (home network) side
+        esp_netif_t *k85_ap = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+        esp_netif_ip_info_t k85_ipi = {};
+        if (k85_ap && esp_netif_get_ip_info(k85_ap, &k85_ipi) == ESP_OK && k85_ipi.ip.addr != 0) addr.sin_addr.s_addr = k85_ipi.ip.addr;
+        else addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    }
     addr.sin_port = htons(80);
     bind(listen_fd, (struct sockaddr *)&addr, sizeof(addr));
     listen(listen_fd, 2);
