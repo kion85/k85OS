@@ -10,6 +10,7 @@
 #include "text_input.h"
 #include "../../core/config.h"
 #include "../../net/firmware_flash.h"
+#include "../../system/voice.h"   // K85HSMEM2
 
 #include "esp_wifi.h"
 #include "esp_log.h"
@@ -972,7 +973,25 @@ void k85_run_wifi_hotspot(void) {
 
     gen_random_string(s_web_access_key, 6 + (int)(esp_random() % 5), false); s_session[0] = 0;
 
+    // K85HSMEM: drop the WiFi driver buffers first, then take the server task stack while internal RAM is not fragmented yet
+    k85_wifi_stop();
+    if (!s_hotspot_task_stack) s_hotspot_task_stack = (StackType_t *)heap_caps_malloc(K85_HOTSPOT_TASK_STACK_BYTES, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    k85_voice_dl_abort();                    // K85HSMEM2: a running voice-pack download holds a TLS socket and a lot of RAM
+    k85_wifi_stop();
+    k85_wifi_set_low_mem(true);              // fewer / dynamic Wi-Fi buffers: the SoftAP has to fit into the little internal RAM left
+    if (!s_hotspot_task_stack) s_hotspot_task_stack = (StackType_t *)heap_caps_malloc(K85_HOTSPOT_TASK_STACK_BYTES, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     k85_wifi_init();
+    {   // the Wi-Fi driver dereferences NULL when it cannot allocate the AP structures: refuse instead of crashing
+        unsigned fi = (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024), lb = (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024);
+        if (fi < 10 || lb < 3) {
+            char m[112];
+            snprintf(m, sizeof(m), "Not enough RAM for the hotspot\ninternal %u KB, block %u KB\nA+B=back", fi, lb);
+            k85_show_message(m);
+            k85_wifi_stop();
+            k85_wifi_init();
+            return;
+        }
+    }
 
     if (!s_ap_netif) {
         s_ap_netif = esp_netif_create_default_wifi_ap();
@@ -1070,7 +1089,9 @@ void k85_run_wifi_hotspot(void) {
     if (!task_ok) {
         s_hotspot_task_running = false;
         close(s_hotspot_listen_fd);
-        k85_show_message("Server task failed\n(PSRAM OOM?)\nA+B=back");
+        char k85_m[112];
+        snprintf(k85_m, sizeof(k85_m), "Server task failed\ninternal RAM: %u KB free\nlargest block: %u KB\nA+B=back", (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024), (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024));
+        k85_show_message(k85_m);
         esp_wifi_set_mode(WIFI_MODE_STA);
         vTaskDelay(pdMS_TO_TICKS(1500));
         return;

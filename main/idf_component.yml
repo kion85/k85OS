@@ -9,3 +9,4 @@ dependencies:
   joltwallet/littlefs: "*"
   espressif/cjson: "*"
   espressif/esp_websocket_client: "*"
+  espressif/esp_tinyusb: "^1.4.0"

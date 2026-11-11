@@ -1,4 +1,4 @@
-﻿#include "games_menu.h"
+#include "games_menu.h"
 #include "list_menu.h"
 #include "games/snake.h"
 #include "games/tetris.h"
@@ -8,6 +8,7 @@
 #include "games/flappy.h"
 #include "games/pong.h"
 #include "games/memory_match.h"
+#include "games/dash.h"
 #include "../net/app_repo.h"
 #include "../net/firmware_flash.h"
 #include "../net/wifi.h"
@@ -22,10 +23,10 @@
 
 #include <cstring>
 
-#define K85_GAMES_ITEM_COUNT 10
+#define K85_GAMES_ITEM_COUNT 11
 
 static const char *k85_games_labels[K85_GAMES_ITEM_COUNT] = {
-    "Snake", "Tetris", "2048", "Race", "Reaction", "Flappy", "Pong", "Memory", "Download", "Back",
+    "Snake", "Tetris", "2048", "Race", "Reaction", "Flappy", "Pong", "Memory", "Dash", "Download", "Back",
 };
 
 // Иконки для главного меню Games.
@@ -64,6 +65,12 @@ static void draw_games_icon(int cx, int cy, int r, const char *name, uint32_t co
         // Молния.
         d.fillTriangle(cx + r/4, cy - r, cx - r/2, cy + r/6, cx, cy + r/6, col);
         d.fillTriangle(cx, cy + r/6, cx - r/4, cy + r, cx + r/2, cy - r/6, col);
+    } else if (!strcmp(name, "Dash")) {
+        { int gy = cy + r / 4;
+          d.fillRect(cx - r + r / 8, gy - r / 2, r / 2, r / 2, col);
+          d.fillRect(cx - r + r / 4, gy - r / 2 + r / 8, r / 8 + 1, r / 8 + 1, bg_col);
+          d.fillTriangle(cx + r / 8, gy, cx + r / 2 + r / 8, gy, cx + r / 4 + r / 8, gy - r / 2, col);
+          d.fillRect(cx - r, gy, 2 * r, 2, col); }
     } else if (!strcmp(name, "Flappy")) {
         d.fillCircle(cx, cy, r/2, col);
         d.fillTriangle(cx - r/2, cy, cx - r, cy - r/4, cx - r, cy + r/4, col);
@@ -151,7 +158,8 @@ void k85_run_games_menu(void) {
             case 5: k85_run_flappy(); break;
             case 6: k85_run_pong(); break;
             case 7: k85_run_memory_match(); break;
-            case 8: run_download_menu(); break;
+            case 8: k85_run_dash(); break;
+            case 9: run_download_menu(); break;
             default: break;
         }
     }

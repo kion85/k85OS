@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -24,6 +24,11 @@ typedef struct {
     int flappy;
     int balance;
     int pong;
+    int dash1;
+    int dash2;
+    int dash3;
+    int dash4;
+    int dash5;
 } k85_high_scores_t;
 
 typedef struct {
@@ -44,6 +49,10 @@ typedef struct {
     bool desktop_mode; // false=Firmware (обычное меню), true=OS/Desktop (иконки+таскбар+курсор)
     char alt_slot_name[64]; // имя последней игры/прошивки, зашитой в запасной OTA-слот (Package Manager)
     int sound_volume;
+    uint8_t voice_speed;      // 0 = slow, 1 = normal, 2 = fast
+    uint8_t voice_volume;   // 0..100
+    bool    voice_dl_block;   // Settings -> Voice pack: block downloads
+    bool    voice_auto_dl;     // automatic voice pack download
     int utc_offset; // -12..+12, часовой пояс относительно UTC
     bool ota_locked;   // true = блокирует OTA-обновления по воздуху
     bool wifi_disabled; // true = модуль WiFi выключен пользователем

@@ -70,6 +70,10 @@ void k85_config_defaults(k85_config_t *cfg) {
     cfg->post_beep_enabled = true;
     cfg->alarm_volume_idx = 2; // High по умолчанию
     cfg->sound_muted = false;
+    cfg->voice_auto_dl = true;   // K85VOICE2
+    cfg->voice_dl_block = false;
+    cfg->voice_volume = 55;
+    cfg->voice_speed = 1;
     cfg->sb_flags = 0x3; // по умолчанию: battery% + time
     cfg->sb_bg_color = 0xFFFFFFFF;
     cfg->ap_channel = 1;
@@ -287,6 +291,10 @@ static cJSON *cfg_to_json(const k85_config_t *c) {
     cJSON_AddNumberToObject(root, "menu_ui_style", c->menu_ui_style);
     cJSON_AddNumberToObject(root, "bios_ui_style", c->bios_ui_style);
     cJSON_AddNumberToObject(root, "boot_loader_style", c->boot_loader_style);
+    cJSON_AddBoolToObject(root, "voice_auto_dl", c->voice_auto_dl);
+    cJSON_AddBoolToObject(root, "voice_dl_block", c->voice_dl_block);
+    cJSON_AddNumberToObject(root, "voice_volume", c->voice_volume);
+    cJSON_AddNumberToObject(root, "voice_speed", c->voice_speed);
     cJSON_AddNumberToObject(root, "sleep_wake_mode", c->sleep_wake_mode);
     cJSON_AddNumberToObject(root, "lock_shape", c->lock_shape);
     cJSON_AddNumberToObject(root, "lock_particle_color", (double)c->lock_particle_color);
@@ -306,6 +314,11 @@ static cJSON *cfg_to_json(const k85_config_t *c) {
     cJSON_AddNumberToObject(hs, "flappy",  c->high_scores.flappy);
     cJSON_AddNumberToObject(hs, "balance", c->high_scores.balance);
     cJSON_AddNumberToObject(hs, "pong",    c->high_scores.pong);
+    cJSON_AddNumberToObject(hs, "dash1", c->high_scores.dash1);
+    cJSON_AddNumberToObject(hs, "dash2", c->high_scores.dash2);
+    cJSON_AddNumberToObject(hs, "dash3", c->high_scores.dash3);
+    cJSON_AddNumberToObject(hs, "dash4", c->high_scores.dash4);
+    cJSON_AddNumberToObject(hs, "dash5", c->high_scores.dash5);
     cJSON_AddItemToObject(root, "high_scores", hs);
 
     cJSON *w = cJSON_CreateObject();
@@ -422,6 +435,10 @@ static void cfg_from_json(cJSON *root, k85_config_t *out) {
     { cJSON *_y = cJSON_GetObjectItemCaseSensitive(root, "menu_ui_style"); if (_y) out->menu_ui_style = _y->valueint; }
     { cJSON *_z = cJSON_GetObjectItemCaseSensitive(root, "bios_ui_style"); if (_z) out->bios_ui_style = _z->valueint; }
     { cJSON *_bl = cJSON_GetObjectItemCaseSensitive(root, "boot_loader_style"); if (_bl) out->boot_loader_style = _bl->valueint; }
+    { cJSON *_v = cJSON_GetObjectItemCaseSensitive(root, "voice_auto_dl"); if (_v) out->voice_auto_dl = cJSON_IsTrue(_v); }
+    { cJSON *_v = cJSON_GetObjectItemCaseSensitive(root, "voice_dl_block"); if (_v) out->voice_dl_block = cJSON_IsTrue(_v); }
+    { cJSON *_v = cJSON_GetObjectItemCaseSensitive(root, "voice_volume"); if (_v) { int n = _v->valueint; out->voice_volume = n < 0 ? 0 : (n > 100 ? 100 : n); } }
+    { cJSON *_v = cJSON_GetObjectItemCaseSensitive(root, "voice_speed"); if (_v) { int n = _v->valueint; out->voice_speed = (n < 0 || n > 2) ? 1 : n; } }
     { cJSON *_sw = cJSON_GetObjectItemCaseSensitive(root, "sleep_wake_mode"); if (_sw) out->sleep_wake_mode = _sw->valueint; }
     { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "lock_shape"); if (_x && cJSON_IsNumber(_x)) out->lock_shape = _x->valueint; }
     { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "lock_particle_color"); if (_x && cJSON_IsNumber(_x)) out->lock_particle_color = (uint32_t)_x->valuedouble; }
@@ -446,6 +463,11 @@ static void cfg_from_json(cJSON *root, k85_config_t *out) {
         GET_HS("flappy", flappy);
         GET_HS("balance", balance);
         GET_HS("pong", pong);
+        GET_HS("dash1", dash1);
+        GET_HS("dash2", dash2);
+        GET_HS("dash3", dash3);
+        GET_HS("dash4", dash4);
+        GET_HS("dash5", dash5);
 #undef GET_HS
     }
 
@@ -647,6 +669,11 @@ int k85_get_high_score(const char *game) {
     if (!strcmp(game, "flappy"))  return g_config.high_scores.flappy;
     if (!strcmp(game, "balance")) return g_config.high_scores.balance;
     if (!strcmp(game, "pong"))    return g_config.high_scores.pong;
+    if (!strcmp(game, "dash1")) return g_config.high_scores.dash1;
+    if (!strcmp(game, "dash2")) return g_config.high_scores.dash2;
+    if (!strcmp(game, "dash3")) return g_config.high_scores.dash3;
+    if (!strcmp(game, "dash4")) return g_config.high_scores.dash4;
+    if (!strcmp(game, "dash5")) return g_config.high_scores.dash5;
     return 0;
 }
 
@@ -659,6 +686,11 @@ static int *high_score_ptr(const char *game) {
     if (!strcmp(game, "flappy"))  return &g_config.high_scores.flappy;
     if (!strcmp(game, "balance")) return &g_config.high_scores.balance;
     if (!strcmp(game, "pong"))    return &g_config.high_scores.pong;
+    if (!strcmp(game, "dash1")) return &g_config.high_scores.dash1;
+    if (!strcmp(game, "dash2")) return &g_config.high_scores.dash2;
+    if (!strcmp(game, "dash3")) return &g_config.high_scores.dash3;
+    if (!strcmp(game, "dash4")) return &g_config.high_scores.dash4;
+    if (!strcmp(game, "dash5")) return &g_config.high_scores.dash5;
     return NULL;
 }
 

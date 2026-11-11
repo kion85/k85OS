@@ -1,4 +1,7 @@
 #include "boot_screen.h"
+#include "boot_request.h"
+#include "rec.h"  // K85BL3
+#include "boot_request.h"  // K85BL2
 #include "config.h"
 #include "theme.h"
 #include "boot_theme.h"
@@ -17,7 +20,7 @@
 #include <cstring>
 #include <cmath>
 
-#define K85_FW_VERSION "8.2"
+#define K85_FW_VERSION "8.5"
 #define K85_BOOT_DURATION_MS 4000
 #define K85_BOOT_MENU_TIMEOUT_MS 3000
 
@@ -379,9 +382,9 @@ static void draw_boot_menu_dispatch(int selected, int seconds_left) {
     }
 }
 
-static BootChoice run_boot_menu(void) {
+static BootChoice run_boot_menu(bool forced) {
     int selected = 0;
-    bool interacted = false;
+    bool interacted = forced;   // K85BL2: opened by hold-A at power-on -> wait for a choice, no auto-boot
     int64_t start_us = esp_timer_get_time();
     int last_seconds_shown = -1;
 
@@ -467,17 +470,21 @@ void k85_check_panic_screen(void) {
 void k85_show_boot_screen(void) {
     s_boot_theme = k85_boot_theme_load();
 
-    show_pre_boot_logo(s_boot_theme);
+    int bl_choice = k85_boot_request_take();
+    if (bl_choice == 4) k85_run_rec();          // K85REC: SD recovery, restarts into the boot menu
+    if (bl_choice < 0) show_pre_boot_logo(s_boot_theme);
 
     BootChoice choice;
-    if (g_config.grub_enabled) {
-        choice = run_boot_menu();
+    bool forced_menu = k85_boot_request_menu();  // K85BL2
+    if (forced_menu || (g_config.grub_enabled && bl_choice < 0)) {
+        choice = run_boot_menu(forced_menu);
     } else {
         int c = g_config.default_boot_choice;
         if (c < 0 || c > 3) c = 0;
         choice = (BootChoice)c;
     }
 
+    if (bl_choice >= 0) choice = (bl_choice == 1) ? BOOT_BIOS : (bl_choice == 2) ? BOOT_TEST : BOOT_NORMAL;
     if (choice == BOOT_BIOS) {
         k85_run_bios_menu();
         return;

@@ -11,6 +11,8 @@ idf_component_register(
          "core/rtc_ntp.cpp"
          "core/device.cpp"
          "core/boot_screen.cpp"
+         "apps/rec.cpp"
+         "core/boot_request.cpp"
          "core/notifications.cpp"
          "core/profiles.cpp"
          "core/totp.cpp"
@@ -33,6 +35,8 @@ idf_component_register(
          "net/wifi.cpp"
          "apps/store.cpp"
          "apps/tools_menu.cpp"
+         "apps/usb_drive.cpp"
+         "apps/backup.cpp"
          "apps/games_menu.cpp"
          "apps/tools/wifi_manager.cpp"
          "apps/tools/i2c_scanner.cpp"
@@ -86,6 +90,7 @@ idf_component_register(
          "apps/games/reaction.cpp"
          "apps/games/flappy.cpp"
          "apps/games/pong.cpp"
+         "apps/games/dash.cpp"
          "apps/games/memory_match.cpp"
          "ble_hid/hid_dev.c"
          "ble_hid/hid_device_le_prf.c"
@@ -95,6 +100,7 @@ idf_component_register(
          "net/kiwisdr_client.cpp"
          "net/k85_mqtt.cpp"
          "apps/tools/web_radio.cpp"
+         "apps/tools/browser.cpp"
          "core/setup_wizard.cpp"
          "core/cpu_freq.cpp"
          "apps/tools/web_terminal.cpp"
@@ -119,7 +125,7 @@ idf_component_register(
          "core/line_edit.cpp"
 	 "core/cron.cpp"
     INCLUDE_DIRS "." "core" "ui" "steps" "system" "net" "apps" "apps/games" "apps/tools" "ble_hid"
-    PRIV_REQUIRES bootloader_support efuse json esp_netif esp_driver_tsens esp_wifi nvs_flash esp_event esp_driver_i2c esp_driver_gpio bt esp_driver_rmt esp_https_ota esp_http_client app_update mbedtls esp-libhelix-mp3 mbedtls wolfssl wolfssh esp_psram esp_websocket_client mqtt mdns
+    PRIV_REQUIRES fatfs sdmmc driver spi_flash bootloader_support efuse json esp_netif esp_driver_tsens esp_wifi nvs_flash esp_event esp_driver_i2c esp_driver_gpio bt esp_driver_rmt esp_https_ota esp_http_client app_update mbedtls esp-libhelix-mp3 mbedtls wolfssl wolfssh esp_psram esp_websocket_client mqtt mdns
 )
 
 # Форсируем линкер считать XMALLOC/XFREE/XREALLOC нужными символами с самого
@@ -134,36 +140,9 @@ set_source_files_properties(
     PROPERTIES COMPILE_OPTIONS "-Wno-unused-const-variable"
 )
 
+# K85_M5GFX_PSRAM: m5gfx 0.3.0 includes esp_psram.h but does not list the component in its REQUIRES
+idf_component_get_property(k85_m5gfx_lib m5stack__m5gfx COMPONENT_LIB)
+target_link_libraries(${k85_m5gfx_lib} PUBLIC idf::esp_psram)
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+# K85_FMT_TRUNC: -Os makes GCC format/string truncation analysis stricter; keep these warnings non-fatal for main
+target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-error=format-truncation -Wno-error=format-overflow -Wno-error=stringop-truncation)

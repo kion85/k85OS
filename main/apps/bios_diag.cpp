@@ -18,6 +18,17 @@
 #include "esp_partition.h"
 #include "esp_secure_boot.h"
 #include "esp_system.h"
+#include "battery.h"
+#include "esp_chip_info.h"
+#include "esp_flash.h"
+#include "esp_mac.h"
+#include "esp_timer.h"
+#include "esp_vfs_fat.h"
+#include "sdmmc_cmd.h"
+#include "driver/sdspi_host.h"
+#include "driver/spi_common.h"
+#include "rec_pins.h"
+#include <cstdlib>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -246,19 +257,270 @@ static void test_psram(void) {
     show_and_wait(msg);
 }
 
+// ======================= Storage / boot / power info =======================
+static const char *dg_flash_vendor(uint8_t m) {
+    switch (m) {
+        case 0xEF: return "Winbond";
+        case 0xC8: return "GigaDevice";
+        case 0x20: return "XMC/Micron";
+        case 0xC2: return "Macronix";
+        case 0x85: return "Puya";
+        case 0x0B: return "XTX";
+        case 0x1C: return "EON";
+        case 0xA1: return "Fudan";
+        default:   return "unknown";
+    }
+}
+
+// same SD wiring and bus (SPI2) as the Rec app and the backup feature
+static bool dg_sd_mount(sdmmc_card_t **card) {
+    esp_vfs_fat_mount_config_t mc = {};
+    mc.format_if_mount_failed = false;
+    mc.max_files = 4;
+    mc.allocation_unit_size = 16 * 1024;
+    sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+    host.slot = SPI2_HOST;
+    host.max_freq_khz = 20000;
+    spi_bus_config_t bus = {};
+    bus.mosi_io_num = K85_SD_MOSI;
+    bus.miso_io_num = K85_SD_MISO;
+    bus.sclk_io_num = K85_SD_SCK;
+    bus.quadwp_io_num = -1;
+    bus.quadhd_io_num = -1;
+    bus.max_transfer_sz = 4096;
+    esp_err_t e = spi_bus_initialize((spi_host_device_t)host.slot, &bus, SDSPI_DEFAULT_DMA);
+    if (e != ESP_OK && e != ESP_ERR_INVALID_STATE) return false;
+    sdspi_device_config_t sl = SDSPI_DEVICE_CONFIG_DEFAULT();
+    sl.gpio_cs = (gpio_num_t)K85_SD_CS;
+    sl.host_id = (spi_host_device_t)host.slot;
+    if (esp_vfs_fat_sdspi_mount("/sdcard", &host, &sl, &mc, card) != ESP_OK) {
+        spi_bus_free((spi_host_device_t)host.slot);
+        return false;
+    }
+    return true;
+}
+
+static void dg_sd_unmount(sdmmc_card_t *card) {
+    esp_vfs_fat_sdcard_unmount("/sdcard", card);
+    spi_bus_free(SPI2_HOST);
+}
+
+static void dg_sd_test(const Pal &p) {
+    char l[48];
+    put_row(5, "SD: mounting ...", p);
+    put_row(6, "", p);
+    put_row(7, "", p);
+    sdmmc_card_t *card = nullptr;
+    if (!dg_sd_mount(&card)) { put_row(5, "SD: no card / mount failed", p); return; }
+    uint64_t bytes = (uint64_t)card->csd.capacity * (uint64_t)card->csd.sector_size;
+    snprintf(l, sizeof(l), "SD: %.5s  %u MB", card->cid.name, (unsigned)(bytes >> 20));
+    put_row(5, l, p);
+
+    const size_t kBlk = 4096, kCount = 64;                    // 256 KB test file
+    uint8_t *wb = (uint8_t *)malloc(kBlk);
+    uint8_t *rb = (uint8_t *)malloc(kBlk);
+    if (!wb || !rb) {
+        free(wb); free(rb);
+        dg_sd_unmount(card);
+        put_row(6, "Not enough memory", p);
+        return;
+    }
+    for (size_t i = 0; i < kBlk; i++) wb[i] = (uint8_t)(i * 31 + 7);
+    const char *path = "/sdcard/k85_test.tmp";
+
+    int64_t t0 = esp_timer_get_time();
+    FILE *f = fopen(path, "wb");
+    bool ok = (f != nullptr);
+    for (size_t i = 0; ok && i < kCount; i++) ok = (fwrite(wb, 1, kBlk, f) == kBlk);
+    if (f && fclose(f) != 0) ok = false;
+    int64_t t1 = esp_timer_get_time();
+    if (!ok) {
+        remove(path);
+        free(wb); free(rb);
+        dg_sd_unmount(card);
+        put_row(6, "Write FAILED (card locked/full?)", p);
+        return;
+    }
+    int64_t dw = t1 - t0;
+    snprintf(l, sizeof(l), "Write: %u KB/s", (unsigned)((uint64_t)kBlk * kCount * 1000000ULL / (uint64_t)(dw > 0 ? dw : 1) / 1024));
+    put_row(6, l, p);
+
+    int64_t t2 = esp_timer_get_time();
+    bool same = true;
+    f = fopen(path, "rb");
+    if (!f) same = false;
+    for (size_t i = 0; f && i < kCount; i++) {
+        if (fread(rb, 1, kBlk, f) != kBlk || memcmp(rb, wb, kBlk) != 0) { same = false; break; }
+    }
+    if (f) fclose(f);
+    int64_t t3 = esp_timer_get_time();
+    remove(path);
+    free(wb); free(rb);
+    dg_sd_unmount(card);
+    int64_t dr = t3 - t2;
+    snprintf(l, sizeof(l), "Read: %u KB/s  %s", (unsigned)((uint64_t)kBlk * kCount * 1000000ULL / (uint64_t)(dr > 0 ? dr : 1) / 1024),
+             same ? "data OK" : "DATA MISMATCH");
+    put_row(7, l, p);
+}
+
+static void dg_storage(void) {
+    Pal p = pal();
+    draw_frame("STORAGE TEST", p);
+    uint32_t id = 0, fsz = 0;
+    esp_flash_read_id(nullptr, &id);
+    esp_flash_get_size(nullptr, &fsz);
+    size_t tot = 0, used = 0;
+    bool fs_ok = k85_fs_info(&tot, &used);
+    uint8_t mf = (uint8_t)(id >> 16);
+    char l[48];
+    snprintf(l, sizeof(l), "Flash: %u MB   ID %06X", (unsigned)(fsz >> 20), (unsigned)id);
+    put_row(0, l, p);
+    snprintf(l, sizeof(l), "Vendor: %s", dg_flash_vendor(mf));
+    put_row(1, l, p);
+    put_row(2, mf == 0x20 ? "XMC flash: keep XMC support ON" : "XMC support not needed", p);
+    if (fs_ok) snprintf(l, sizeof(l), "LittleFS: %u / %u KB used", (unsigned)(used / 1024), (unsigned)(tot / 1024));
+    else snprintf(l, sizeof(l), "LittleFS: n/a");
+    put_row(3, l, p);
+    put_row(8, "B=SD speed test   A+B=exit", p);
+    while (true) {
+        k85_input_update();
+        if (k85_ab_held(500)) { k85_wait_ab_release(); return; }
+        if (k85_btn_b_pressed()) dg_sd_test(p);
+        vTaskDelay(pdMS_TO_TICKS(30));
+    }
+}
+
+static const char *dg_reset_name(esp_reset_reason_t r) {
+    switch (r) {
+        case ESP_RST_POWERON:   return "power-on";
+        case ESP_RST_EXT:       return "external pin";
+        case ESP_RST_SW:        return "software restart";
+        case ESP_RST_PANIC:     return "PANIC (crash)";
+        case ESP_RST_INT_WDT:   return "interrupt watchdog";
+        case ESP_RST_TASK_WDT:  return "task watchdog";
+        case ESP_RST_WDT:       return "other watchdog";
+        case ESP_RST_DEEPSLEEP: return "deep sleep wake";
+        case ESP_RST_BROWNOUT:  return "BROWNOUT (low power)";
+        default:                return "other";
+    }
+}
+
+// crash-loop guard log, written by the boot loader hook (spare sector 0x14000): crash resets since the last normal boot
+static int dg_crash_streak(void) {
+    uint32_t w[32];
+    int streak = 0;
+    for (uint32_t base = 0; base < 1024; base += 32) {
+        if (esp_flash_read(nullptr, w, 0x14000 + base * 4, sizeof(w)) != ESP_OK) return -1;
+        for (int i = 0; i < 32; i++) {
+            if (w[i] == 0xFFFFFFFFu) return streak;
+            if (w[i] == 0x4B4C0002u) streak = 0;
+            else if (w[i] == 0x4B4C0001u) streak++;
+        }
+    }
+    return streak;
+}
+
+static void dg_boot_info(void) {
+    Pal p = pal();
+    draw_frame("BOOT INFO", p);
+    char l[48];
+    snprintf(l, sizeof(l), "Reset: %s", dg_reset_name(esp_reset_reason()));
+    put_row(0, l, p);
+    esp_chip_info_t ci;
+    esp_chip_info(&ci);
+    snprintf(l, sizeof(l), "Chip: S3 rev v%d.%d, %d cores", (int)(ci.revision / 100), (int)(ci.revision % 100), (int)ci.cores);
+    put_row(1, l, p);
+    snprintf(l, sizeof(l), "IDF: %.28s", esp_get_idf_version());
+    put_row(2, l, p);
+    const esp_partition_t *run = esp_ota_get_running_partition();
+    if (run) {
+        esp_app_desc_t d;
+        if (esp_ota_get_partition_description(run, &d) == ESP_OK) snprintf(l, sizeof(l), "App: %.14s v%.14s", d.project_name, d.version);
+        else snprintf(l, sizeof(l), "App: n/a");
+        put_row(3, l, p);
+        const char *ss = "n/a";
+        esp_ota_img_states_t st;
+        if (esp_ota_get_state_partition(run, &st) == ESP_OK) {
+            switch (st) {
+                case ESP_OTA_IMG_NEW:            ss = "new"; break;
+                case ESP_OTA_IMG_PENDING_VERIFY: ss = "pending verify"; break;
+                case ESP_OTA_IMG_VALID:          ss = "valid"; break;
+                case ESP_OTA_IMG_INVALID:        ss = "invalid"; break;
+                case ESP_OTA_IMG_ABORTED:        ss = "aborted"; break;
+                default:                         ss = "undefined"; break;
+            }
+        }
+        snprintf(l, sizeof(l), "Slot: %s @0x%06X  %s", run->label, (unsigned)run->address, ss);
+        put_row(4, l, p);
+    }
+    uint8_t mac[6] = {0};
+    esp_efuse_mac_get_default(mac);
+    snprintf(l, sizeof(l), "MAC: %02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    put_row(5, l, p);
+    snprintf(l, sizeof(l), "Min free heap: %u KB", (unsigned)(esp_get_minimum_free_heap_size() / 1024));
+    put_row(6, l, p);
+    { int cs = dg_crash_streak(); char cl[48]; if (cs >= 0) snprintf(cl, sizeof(cl), "Crash streak: %d (guard at 3)", cs); else snprintf(cl, sizeof(cl), "Crash streak: n/a"); put_row(7, cl, p); }
+    put_row(8, "A+B=exit", p);
+    wait_ab_exit();
+}
+
+static void dg_power(void) {
+    Pal p = pal();
+    draw_frame("POWER INFO", p);
+    put_row(8, "A+B=exit", p);
+    int64_t last = 0;
+    while (true) {
+        k85_input_update();
+        if (k85_ab_held(500)) { k85_wait_ab_release(); return; }
+        int64_t now = esp_timer_get_time();
+        if (last == 0 || now - last >= 1000000) {
+            last = now;
+            char l[48];
+            int pct = k85_get_battery();
+            int32_t mv = M5.Power.getBatteryVoltage();
+            int32_t vbus = M5.Power.getVBUSVoltage();
+            int32_t cur = M5.Power.getBatteryCurrent();
+            int chg = (int)M5.Power.isCharging();
+            if (pct >= 0) snprintf(l, sizeof(l), "Battery: %d%%   %.2f V", pct, mv / 1000.0f);
+            else snprintf(l, sizeof(l), "Battery: n/a   %.2f V", mv / 1000.0f);
+            put_row(0, l, p);
+            snprintf(l, sizeof(l), "State: %s", chg == 1 ? "charging" : (chg == 0 ? "discharging" : "unknown"));
+            put_row(1, l, p);
+            if (vbus > 0) snprintf(l, sizeof(l), "USB (VBUS): %.2f V", vbus / 1000.0f);
+            else snprintf(l, sizeof(l), "USB (VBUS): not connected");
+            put_row(2, l, p);
+            snprintf(l, sizeof(l), "Battery current: %d mA", (int)cur);
+            put_row(3, l, p);
+        }
+        vTaskDelay(pdMS_TO_TICKS(30));
+    }
+}
+
+// Diagnostics -> Crash test: a deliberate abort() to try the boot loader crash-loop guard (3 crashes in a row)
+static void dg_crash_test(void) {
+    if (!confirm_msg("Crash the firmware now?\nTests the crash-loop guard\nof the boot loader\nB=confirm A+B=cancel")) return;
+    k85_show_message("Crashing ...");
+    vTaskDelay(pdMS_TO_TICKS(600));
+    abort();
+}
+
 void k85_run_diagnostics(void) {
     static const char *items[] = {
-        "Display test", "Buttons test", "Speaker test", "IMU test", "RTC test", "PSRAM test", "Back",
+        "Display test", "Buttons test", "Speaker test", "IMU test", "RTC test", "PSRAM test", "Storage test", "Boot info", "Power info", "Crash test", "Back",
     };
     while (true) {
-        int idx = k85_run_list_menu("DIAGNOSTICS", items, 7, nullptr);
-        if (idx < 0 || idx == 6) return;
+        int idx = k85_run_list_menu("DIAGNOSTICS", items, 11, nullptr);
+        if (idx < 0 || idx == 10) return;
         if (idx == 0) test_display();
         else if (idx == 1) test_buttons();
         else if (idx == 2) test_speaker();
         else if (idx == 3) test_imu();
         else if (idx == 4) test_rtc();
         else if (idx == 5) test_psram();
+        else if (idx == 6) dg_storage();
+        else if (idx == 7) dg_boot_info();
+        else if (idx == 8) dg_power();
+        else if (idx == 9) dg_crash_test();
     }
 }
 

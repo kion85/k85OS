@@ -18,6 +18,7 @@
 #include "store.h"
 #include "tools_menu.h"
 #include "games_menu.h"
+#include "browser.h" // K85BROWSER
 #include "linux_menu.h" // K85LNX
 #include "../apps/tools/json_interpreter.h"
 #include "rtc_ntp.h"
@@ -38,7 +39,7 @@
 
 static const char *const K85_MENU_ITEMS[] = {
     "Low tone", "High tone", "Both tones", "Cube", "Colors",
-    "Clock", "WiFi", "Apps", "Tools", "Games", "Linux", "Interpreter", "Settings", "System info", "Logs", "Notifications",
+    "Clock", "WiFi", "Browser", "Apps", "Tools", "Games", "Linux", "Interpreter", "Settings", "System info", "Logs", "Notifications",
 };
 #define K85_MENU_ITEM_COUNT (int)(sizeof(K85_MENU_ITEMS) / sizeof(K85_MENU_ITEMS[0]))
 
@@ -127,6 +128,11 @@ static void draw_menu_icon(int cx, int cy, int r, const char *name, uint32_t col
         d.fillRect(cx + 2, cy - r/2, s, s, col);
         d.fillRect(cx - r/2, cy + 2, s, s, col);
         d.fillRect(cx + 2, cy + 2, s, s, col);
+    } else if (!strcmp(name, "Browser")) {  // K85BROWSER
+        d.drawCircle(cx, cy, r, col);
+        d.drawEllipse(cx, cy, r / 2, r, col);
+        d.drawFastHLine(cx - r, cy, r * 2, col);
+        d.drawFastVLine(cx, cy - r, r * 2, col);
     } else if (!strcmp(name, "Linux")) {  // K85LNX
         M5.Display.drawEllipse(cx, cy + r / 4, r / 2 + 2, r * 3 / 4, col);        // body
         M5.Display.drawCircle(cx, cy - r / 2, r / 3 + 1, col);                    // head
@@ -592,6 +598,8 @@ static void run_action(int index) {
         k85_run_clock_menu();
     } else if (!strcmp(item, "WiFi")) {
         k85_run_wifi_menu();
+    } else if (!strcmp(item, "Browser")) {
+        k85_run_browser();
     } else if (!strcmp(item, "Apps")) {
         k85_run_apps_menu();
     } else if (!strcmp(item, "Games")) {

@@ -51,6 +51,10 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
     }
 }
 
+// K85WIFILOW: low-memory profile for the SoftAP hotspot (static TX buffers are internal RAM, dynamic ones go to PSRAM)
+static bool s_low_mem = false;
+void k85_wifi_set_low_mem(bool on) { s_low_mem = on; }
+
 void k85_wifi_init(void) {
     if (s_inited) return;
 
@@ -72,6 +76,14 @@ void k85_wifi_init(void) {
     }
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    if (s_low_mem) {
+        cfg.static_rx_buf_num = 4;
+        cfg.dynamic_rx_buf_num = 8;
+        cfg.tx_buf_type = 1;            // WIFI_DYNAMIC_TX_BUFFER
+        cfg.static_tx_buf_num = 0;
+        cfg.dynamic_tx_buf_num = 16;
+        cfg.rx_ba_win = 4;              // must not exceed the static / dynamic rx buffer counts
+    }
     esp_wifi_init(&cfg);
 
     // Регистрируем обработчики событий только если их ещё нет (после
@@ -184,6 +196,7 @@ void k85_wifi_stop(void) {
 
     esp_wifi_stop();
     esp_wifi_deinit();
+    s_low_mem = false;   // K85WIFILOW: the profile applies to one init only
 
     if (s_wifi_evt_instance) {
         esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, s_wifi_evt_instance);

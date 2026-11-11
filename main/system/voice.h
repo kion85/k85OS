@@ -3,6 +3,9 @@
 
 void k85_voice_init(void);               // необязательно: всё поднимается лениво
 bool k85_voice_enabled(void);
+int  k85_voice_download_now();        // manual voice-pack download, 0 = started
+void k85_voice_apply_settings();     // apply volume/speed from g_config
+void k85_voice_dl_abort();   // abort a running voice-pack download
 void k85_voice_set(bool on);             // говорит "on"/"off", громкость ~55%
 void k85_voice_say(const char *text);    // no-op, если режим выключен
 bool k85_voice_pack_present(void);

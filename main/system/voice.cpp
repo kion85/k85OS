@@ -1,5 +1,7 @@
 // K85V:psram - voice pack lives in PSRAM only (downloaded to RAM, not to flash)
 #include "voice.h"
+#include "config.h"   // K85VOICE2
+#include "wifi.h"
 #include "M5Unified.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h" // K85V:log
@@ -32,6 +34,7 @@ static volatile bool s_on = false, s_off_pending = false, s_pack_running = false
 static volatile uint32_t s_gen = 0;
 static volatile bool s_notify = false; // K85V:notify
 static QueueHandle_t s_q = nullptr;
+static void voice_start_download(bool manual);
 
 static uint32_t fnv(const char *s, size_t n) {
     uint32_t h = 2166136261u;
@@ -72,9 +75,14 @@ static const VEntry *find_entry(uint32_t h) {
     return nullptr;
 }
 
+// Settings -> Voice pack -> Speed: slow / medium / fast = playback rate x0.8 / x1 / x1.25
+static uint32_t voice_rate(void) {
+    switch (g_config.voice_speed) { case 0: return s_rate * 4 / 5; case 2: return s_rate * 5 / 4; default: return s_rate; }
+}
+
 static bool play_clip(const VEntry &e, uint32_t gen) {
     if (M5.Mic.isRunning()) return false; // K85V:spk - speaker released by mic / IR / etc.
-    M5.Speaker.playRaw(s_pak + e.off, e.len, s_rate, false, 1, 0, true);
+    M5.Speaker.playRaw(s_pak + e.off, e.len, voice_rate(), false, 1, 0, true);
     while (M5.Speaker.isPlaying(0)) {
         if (gen != s_gen) { M5.Speaker.stop(0); vTaskDelay(pdMS_TO_TICKS(30)); return false; }
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -126,7 +134,7 @@ void k85_voice_say(const char *t) {
     if (!s_on || !t) return;
     ensure_init();
     VMsg m; strncpy(m.text, t, sizeof(m.text) - 1); m.text[sizeof(m.text) - 1] = 0;
-    m.gen = ++s_gen;
+    s_gen = s_gen + 1; m.gen = s_gen;
     xQueueOverwrite(s_q, &m);
 }
 
@@ -134,10 +142,10 @@ void k85_voice_set(bool on) {
     ensure_init();
     if (on) {
         ESP_LOGI("k85_voice", "set on: pack=%d internal free=%u largest=%u", (int)(s_pak != nullptr), (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
-        M5.Speaker.setVolume(VOICE_VOLUME);
+        M5.Speaker.setVolume((uint8_t)(g_config.voice_volume * 255 / 100));
         if (!s_pak) {                          // pack not in PSRAM yet: low beep, keep trying
             M5.Speaker.tone(300, 500);
-            k85_voice_ensure_pack();
+            voice_start_download(true);   // the user switched the voice on: download even if automatic downloads are off
             return;
         }
         s_off_pending = false; s_on = true;
@@ -152,10 +160,12 @@ void k85_voice_set(bool on) {
 #undef VOICE_MAX_BYTES
 #define VOICE_MAX_BYTES (6u * 1024u * 1024u)
 static volatile bool s_voice_giveup = false;
+static volatile bool s_dl_abort = false;
 struct DlCtx { uint8_t *buf; size_t len, cap; bool fail; };
 
 static esp_err_t dl_evt(esp_http_client_event_t *e) {
     DlCtx *c = (DlCtx *)e->user_data;
+    if (s_dl_abort && c) c->fail = true;
     if (e->event_id == HTTP_EVENT_ON_DATA && c && !c->fail &&
         esp_http_client_get_status_code(e->client) == 200) {
         if (c->len + e->data_len > c->cap) {
@@ -179,7 +189,7 @@ bool k85_voice_download(const char *url) {
     esp_http_client_config_t cfg = {};
     cfg.url = url; cfg.crt_bundle_attach = esp_crt_bundle_attach;
     cfg.event_handler = dl_evt; cfg.user_data = &ctx;
-    cfg.timeout_ms = 20000; cfg.buffer_size = 4096; cfg.buffer_size_tx = 4096;
+    cfg.timeout_ms = 20000; cfg.buffer_size = 2048; cfg.buffer_size_tx = 1024;
     esp_http_client_handle_t c = esp_http_client_init(&cfg);
     bool ok = false;
     if (c) {
@@ -195,29 +205,57 @@ bool k85_voice_download(const char *url) {
 static void pack_task(void *) {
     remove("/littlefs/voice.tmp");             // leftover from the old flash-based version
     remove("/littlefs/voice.pak");
-    for (int i = 0; i < 60 && !s_pak && !s_voice_giveup; i++) {
+    for (int i = 0; i < 60 && !s_pak && !s_voice_giveup && !s_dl_abort && !g_config.voice_dl_block; i++) {
         wifi_ap_record_t ap;
         if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
             ESP_LOGI("k85_voice", "download start: internal free=%u largest=%u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
             if (k85_voice_download(K85_VOICE_URL)) { s_notify = true; ESP_LOGI("k85_voice", "download OK, pack in PSRAM, internal free=%u largest=%u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)); break; }
             ESP_LOGW("k85_voice", "download failed: internal free=%u largest=%u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
         }
-        vTaskDelay(pdMS_TO_TICKS(30000));
+        for (int w = 0; w < 30 && !s_dl_abort; w++) vTaskDelay(pdMS_TO_TICKS(1000));
     }
     s_pack_running = false;
     vTaskDelete(nullptr);
 }
 
-void k85_voice_ensure_pack(void) {
+static void voice_start_download(bool manual) {
+    if (g_config.voice_dl_block) return;                  // Settings -> Voice pack: downloads are blocked
+    if (!manual && !g_config.voice_auto_dl) return;       // automatic downloads are switched off
     if (s_pack_running || s_pak) return;
+    s_dl_abort = false;
     s_pack_running = true;
     if (xTaskCreate(pack_task, "vpack", 10240, nullptr, 2, nullptr) != pdPASS) s_pack_running = false;
 }
 
+void k85_voice_ensure_pack(void) { voice_start_download(false); }
 bool k85_voice_take_notify(void) {
     if (!s_notify) return false;
     s_notify = false;
     return true;
+}
+
+void k85_voice_apply_settings(void) {
+    if (s_on) M5.Speaker.setVolume((uint8_t)(g_config.voice_volume * 255 / 100));
+}
+
+// 0 started, 1 blocked in the settings, 2 pack already loaded, 3 no WiFi, 4 a download is already running
+int k85_voice_download_now(void) {
+    if (g_config.voice_dl_block) return 1;
+    if (s_pak) return 2;
+    wifi_ap_record_t ap;
+    if (esp_wifi_sta_get_ap_info(&ap) != ESP_OK) return 3;
+    if (s_pack_running) return 4;
+    voice_start_download(true);
+    return 0;
+}
+
+// WiFi is about to be reconfigured (hotspot): stop a running download first, it holds a TLS socket and a lot of RAM.
+void k85_voice_dl_abort(void) {
+    if (!s_pack_running) return;
+    s_dl_abort = true;
+    k85_wifi_stop();                       // the blocking HTTPS transfer fails at once
+    for (int i = 0; i < 100 && s_pack_running; i++) vTaskDelay(pdMS_TO_TICKS(100));
+    s_dl_abort = false;
 }
 
 // Green screen for one second: "voice pack ready". Call from the UI thread only.

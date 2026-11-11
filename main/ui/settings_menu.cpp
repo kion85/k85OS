@@ -1,4 +1,6 @@
 #include "settings_menu.h"
+#include "list_menu.h"
+#include "../system/voice.h"   // K85VOICE2
 #include "look.h"
 #include "config.h"
 #include "theme.h"
@@ -27,6 +29,8 @@
 #include "esp_timer.h"
 
 #include "M5Unified.h"
+#include "backup.h"
+#include "usb_drive.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -35,13 +39,13 @@
 #include <cstring>
 #include <cmath>
 
-#define K85_SETTINGS_ITEM_COUNT 22
+#define K85_SETTINGS_ITEM_COUNT 25
 #define K85_SETTINGS_BACK_IDX   (K85_SETTINGS_ITEM_COUNT - 1)
 
 static const char *k85_settings_labels[K85_SETTINGS_ITEM_COUNT] = {
     "Theme", "Brightness", "Battery mode", "Boot style",
     "Device name", "Sound volume", "WiFi", "Reset steps",
-    "Check for updates", "Screen lock", "Status bar", "BG gradient", "Lock screen", "Menu UI style", "CPU freq", "Power", "Font", "Keyboard nav", "Cursor", "Desktop", "Look", "Back",
+    "Check for updates", "Screen lock", "Status bar", "BG gradient", "Lock screen", "Menu UI style", "CPU freq", "Power", "Font", "Keyboard nav", "Cursor", "Desktop", "Look", "Voice pack", "Backup", "USB drive", "Back",
 };
 
 static int s_selected = 0;
@@ -103,7 +107,10 @@ static void settings_value_str(char *out, size_t out_size, int idx) {
             break;
         }
         case 19: snprintf(out, out_size, "%s", g_config.desktop_mode ? "OS" : "Firmware"); break;
-        case 20: out[0] = 0; break; // Back
+        case 20: out[0] = 0; break; // Look
+        case 23: out[0] = 0; break; // USB drive
+        case 22: out[0] = 0; break; // Backup (submenu)
+        case 21: snprintf(out, out_size, "%s", g_config.voice_dl_block ? "blocked" : (g_config.voice_auto_dl ? "auto" : "manual")); break; // Voice pack
         default: out[0] = 0;
     }
 }
@@ -407,6 +414,32 @@ static void settings_draw(void) {
     }
 }
 
+// K85VOICE2: Settings -> Voice pack
+static void settings_voice_menu(void) {
+    static const char *const speed_names[3] = {"slow", "medium", "fast"};
+    while (true) {
+        char l0[40], l1[40], l2[40], l3[40];
+        snprintf(l0, sizeof(l0), "Auto download: %s", g_config.voice_auto_dl ? "ON" : "OFF");
+        snprintf(l1, sizeof(l1), "Block download: %s", g_config.voice_dl_block ? "ON" : "OFF");
+        snprintf(l2, sizeof(l2), "Volume: %d%%", g_config.voice_volume);
+        snprintf(l3, sizeof(l3), "Speed: %s", speed_names[(g_config.voice_speed <= 2) ? g_config.voice_speed : 1]);
+        const char *items[6] = { l0, l1, l2, l3, "Download now", "Back" };
+        const char *keys[6] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
+        int sel = k85_run_list_menu("Voice pack", items, 6, keys);
+        if (sel < 0 || sel == 5) break;
+        if (sel == 0) g_config.voice_auto_dl = !g_config.voice_auto_dl;
+        else if (sel == 1) g_config.voice_dl_block = !g_config.voice_dl_block;
+        else if (sel == 2) { int v = g_config.voice_volume + 10; g_config.voice_volume = v > 100 ? 10 : v; }
+        else if (sel == 3) g_config.voice_speed = (g_config.voice_speed + 1) % 3;
+        else if (sel == 4) {
+            int r = k85_voice_download_now();
+            k85_show_message(r == 0 ? "Voice pack download\nstarted" : r == 1 ? "Downloads are blocked\n(Block download: ON)" : r == 2 ? "Voice pack is\nalready loaded" : r == 3 ? "Connect to WiFi first" : "Download is already\nrunning");
+        }
+        k85_config_save();
+        k85_voice_apply_settings();
+    }
+}
+
 static void settings_apply_item(int idx) {
     switch (idx) {
         case 0:
@@ -582,6 +615,11 @@ static void settings_apply_item(int idx) {
             break;
         case 20:
             k85_look_run_settings();
+            break;
+        case 23: k85_run_usb_drive(); break; // USB drive
+        case 22: k85_run_backup_menu(); break; // Backup
+        case 21:
+            settings_voice_menu();
             break;
         default:
             break;
