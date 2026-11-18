@@ -1,4 +1,5 @@
 #include "wifi_hotspot.h"
+#include "esp_attr.h"
 #include "fs_guard.h"
 #include "wifi.h"
 #include "common.h"
@@ -681,9 +682,9 @@ static void build_firmware_page(char *out, size_t out_size) {
     const esp_partition_t *running = esp_ota_get_running_partition();
     const char *free_slot = k85_fwflash_free_slot_label();
 
-    static char names[K85_FW_LIST_MAX][64];
-    static char urls[K85_FW_LIST_MAX][256];
-    static char sig_urls[K85_FW_LIST_MAX][256];
+    static EXT_RAM_BSS_ATTR char names[K85_FW_LIST_MAX][64];
+    static EXT_RAM_BSS_ATTR char urls[K85_FW_LIST_MAX][256];
+    static EXT_RAM_BSS_ATTR char sig_urls[K85_FW_LIST_MAX][256];
     int count = 0;
     bool listed = k85_fwflash_list_available(names, urls, sig_urls, K85_FW_LIST_MAX, &count);
 
@@ -827,9 +828,9 @@ static void handle_connection(int conn_fd, const char *ssid) {
         get_query_param(query, "asset", asset_str, sizeof(asset_str));
         int idx = atoi(asset_str);
 
-        static char names[K85_FW_LIST_MAX][64];
-        static char urls[K85_FW_LIST_MAX][256];
-        static char sig_urls[K85_FW_LIST_MAX][256];
+        static EXT_RAM_BSS_ATTR char names[K85_FW_LIST_MAX][64];
+        static EXT_RAM_BSS_ATTR char urls[K85_FW_LIST_MAX][256];
+        static EXT_RAM_BSS_ATTR char sig_urls[K85_FW_LIST_MAX][256];
         int count = 0;
         bool ok = false;
         if (k85_fwflash_list_available(names, urls, sig_urls, K85_FW_LIST_MAX, &count) && idx >= 0 && idx < count) {

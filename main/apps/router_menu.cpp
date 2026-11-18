@@ -181,7 +181,7 @@ static void build_status_page(char *out, size_t out_size, const char *ssid, bool
     }
 
         static char dmacs[K85_DNS_RULES_MAX][18];
-    static char ddomains[K85_DNS_RULES_MAX][64];
+    static EXT_RAM_BSS_ATTR char ddomains[K85_DNS_RULES_MAX][64];
     int n_dns = k85_router_dns_rule_list(dmacs, ddomains, K85_DNS_RULES_MAX);
 
     int w4 = snprintf(out + used, out_size - used,
@@ -384,7 +384,7 @@ static void run_router_log(void) {
         wait_ab_exit();
         return;
     }
-    static char labels[K85_ROUTER_LOG_MAX][48];
+    static EXT_RAM_BSS_ATTR char labels[K85_ROUTER_LOG_MAX][48];
     static const char *names[K85_ROUTER_LOG_MAX];
     for (int i = 0; i < n; i++) {
         snprintf(labels[i], sizeof(labels[i]), "%s %s",
@@ -402,7 +402,7 @@ static void run_router_acl(void) {
         int n = k85_router_acl_list(macs, K85_ROUTER_ACL_MAX);
 
         static const char *items[K85_ROUTER_ACL_MAX + 2];
-        static char labels[K85_ROUTER_ACL_MAX][24];
+        static EXT_RAM_BSS_ATTR char labels[K85_ROUTER_ACL_MAX][24];
         for (int i = 0; i < n; i++) {
             snprintf(labels[i], sizeof(labels[i]), "%s", macs[i]);
             items[i] = labels[i];
@@ -427,11 +427,11 @@ static void run_router_acl(void) {
 static void run_router_dns_rules(void) {
     while (true) {
         static char macs[K85_DNS_RULES_MAX][18];
-        static char domains[K85_DNS_RULES_MAX][64];
+        static EXT_RAM_BSS_ATTR char domains[K85_DNS_RULES_MAX][64];
         int n = k85_router_dns_rule_list(macs, domains, K85_DNS_RULES_MAX);
 
         static const char *items[K85_DNS_RULES_MAX + 2];
-        static char labels[K85_DNS_RULES_MAX][90];
+        static EXT_RAM_BSS_ATTR char labels[K85_DNS_RULES_MAX][90];
         for (int i = 0; i < n; i++) {
             snprintf(labels[i], sizeof(labels[i]), "%s -> %s", macs[i], domains[i]);
             items[i] = labels[i];

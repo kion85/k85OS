@@ -1,4 +1,5 @@
 #include "json_interpreter.h"
+#include "esp_attr.h"
 #include "config.h"
 #include "esp_timer.h"
 #include "esp_random.h"
@@ -107,7 +108,7 @@ static void run_quest_game(cJSON *root) {
             break;
         }
 
-        static char labels[K85_JSON_MAX_CHOICES][40];
+        static EXT_RAM_BSS_ATTR char labels[K85_JSON_MAX_CHOICES][40];
         cJSON *valid_choices[K85_JSON_MAX_CHOICES];
         int n = 0;
         int total = cJSON_GetArraySize(choices);
@@ -1824,7 +1825,7 @@ void k85_run_json_interpreter(void) {
         return;
     }
 
-    static char names[K85_JSON_MAX_FILES][256];
+    static EXT_RAM_BSS_ATTR char names[K85_JSON_MAX_FILES][256];
     int count = 0;
     DIR *d = opendir(K85_JSON_GAMES_DIR);
     if (d) {
@@ -1889,6 +1890,44 @@ void k85_run_json_interpreter(void) {
     size_t bl = strlen(base);
     if (bl > 5 && !strcmp(base + bl - 5, ".json")) base[bl - 5] = 0;
 
+    run_game_from_json(buf, base);
+    heap_caps_free(buf);
+}
+// K85STORE1: run one game file directly (used by KStore)
+void k85_json_run_file(const char *path) {
+    struct stat gst;
+    if (!path || stat(path, &gst) != 0) {
+        k85_show_message("Cannot open file\nA+B=back");
+        wait_ab_exit();
+        return;
+    }
+    if (gst.st_size > K85_JSON_MAX_BYTES) {
+        k85_show_message("Game file too large\n(max 256 KB)\nA+B=back");
+        wait_ab_exit();
+        return;
+    }
+    size_t fsize = (size_t)gst.st_size;
+    char *buf = (char *)heap_caps_malloc(fsize + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!buf) {
+        k85_show_message("Out of memory\nA+B=back");
+        wait_ab_exit();
+        return;
+    }
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        heap_caps_free(buf);
+        k85_show_message("Cannot open file\nA+B=back");
+        wait_ab_exit();
+        return;
+    }
+    size_t r = fread(buf, 1, fsize, f);
+    fclose(f);
+    buf[r] = 0;
+    const char *bn = strrchr(path, '/');
+    char base[48];
+    snprintf(base, sizeof(base), "%.44s", bn ? bn + 1 : path);
+    size_t bl = strlen(base);
+    if (bl > 5 && !strcmp(base + bl - 5, ".json")) base[bl - 5] = 0;
     run_game_from_json(buf, base);
     heap_caps_free(buf);
 }

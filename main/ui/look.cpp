@@ -3,6 +3,7 @@
 // the ready frame is kept in PSRAM and in a cache file, so drawing it later is a single fast copy.
 #pragma GCC diagnostic ignored "-Wformat-truncation"
 #include "look.h"
+#include "esp_attr.h"
 #include "theme.h"
 #include "common.h"
 #include "list_menu.h"
@@ -376,7 +377,7 @@ static int list_images(char names[][LOOK_NAME_MAX], int max) {
 }
 
 static void choose_image(int which) {
-    static char names[LOOK_IMG_MAX][LOOK_NAME_MAX];
+    static EXT_RAM_BSS_ATTR char names[LOOK_IMG_MAX][LOOK_NAME_MAX];
     static char lbl[LOOK_IMG_MAX][24];
     int n = list_images(names, LOOK_IMG_MAX);
     if (n == 0) {

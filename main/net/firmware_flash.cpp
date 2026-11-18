@@ -677,7 +677,7 @@ static bool tp_has_ci(const char *s, const char *needle) {
 
 // short list labels: drop ".bin", cut the prefix shared by all files, max 15 characters, "!" = bigger than the slot
 static void tp_make_labels(const TpAsset *as, const int *idx, int m, uint32_t cap, char lbl[][24]) {
-    static char nm[TP_MAX_ASSETS][56];
+    static EXT_RAM_BSS_ATTR char nm[TP_MAX_ASSETS][56];
     for (int i = 0; i < m; i++) {
         snprintf(nm[i], sizeof(nm[i]), "%.55s", as[idx[i]].name);
         size_t l = strlen(nm[i]);

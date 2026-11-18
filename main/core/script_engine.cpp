@@ -9,6 +9,9 @@
 #include "svc_cfg.h"
 #include "fs_guard.h"
 #include "shell_commands.h"
+#include "js_engine.h" // K85JS1
+#include "headless.h" // K85HL1
+#include "lang.h"
 #include "config.h"
 #include "../net/ftp_server.h"
 #include "../net/ssh_server.h"
@@ -58,7 +61,7 @@ static const char *const kBuiltins[] = {
     "wifi-on", "wifi-off", "brightness", "volume", "panic-test", "reboot", "exit",
     "echo", "set", "alias", "unalias", "sleep", "sh", "cron", "ftp", "ftppass",
     "grep", "head", "tail", "wc", "cp", "mv", "rm", "mkdir", "touch", "date", "df", "du",
-    "hostname", "ifconfig", "nslookup", "wget", "curl", "watch", "neofetch", "at", "tar", "scrprobe", "scrshot",
+    "hostname", "ifconfig", "nslookup", "wget", "curl", "watch", "neofetch", "at", "tar", "scrprobe", "scrshot", "lua", "headless",
 };
 
 static bool is_builtin(const char *name) {
@@ -476,6 +479,26 @@ static void ext_ftppass(const char *arg, char *out, size_t out_size) {
     snprintf(out, out_size, "FTP login saved (user: %s)\r\n", user);
 }
 
+// K85JS1: js <file.js>  |  js -e "code"
+static void ext_js(const char *arg, char *out, size_t out_size) {
+    out[0] = 0;
+    while (*arg == ' ') arg++;
+    if (!*arg) { snprintf(out, out_size, "usage: lua <file.lua>   or   lua -e \"code\"\r\n"); return; }
+    if (arg[0] == '-' && arg[1] == 'e' && arg[2] == ' ') {
+        char code[160];
+        const char *c = arg + 3;
+        while (*c == ' ') c++;
+        snprintf(code, sizeof(code), "%s", c);
+        size_t n = strlen(code);
+        if (n >= 2 && (code[0] == '"' || code[0] == '\'') && code[n - 1] == code[0]) {
+            memmove(code, code + 1, n - 2);
+            code[n - 2] = 0;
+        }
+        k85_js_run_code(code, out, out_size, false);
+        return;
+    }
+    k85_js_run_file(arg, out, out_size, false);
+}
 bool k85_ext_run_command(const char *cmd, const char *arg, char *out, size_t out_size) {
     if (!strcmp(cmd, "echo")) {
         char tmp[192];
@@ -498,6 +521,10 @@ bool k85_ext_run_command(const char *cmd, const char *arg, char *out, size_t out
     if (!strcmp(cmd, "cron"))    { ext_cron(arg, out, out_size); return true; }
     if (!strcmp(cmd, "ftp"))     { ext_ftp(arg, out, out_size); return true; }
     if (!strcmp(cmd, "ftppass")) { ext_ftppass(arg, out, out_size); return true; }
+    if (!strcmp(cmd, "lua"))      { ext_js(arg, out, out_size); return true; }
+    if (!strcmp(cmd, "headless")) { k85_headless_cmd(arg, out, out_size); return true; }
+    if (!strcmp(cmd, "mem")) { k85_mem_report(out, out_size); return true; }
+    if (!strcmp(cmd, "lang")) { k85_lang_cmd(arg, out, out_size); return true; }
     if (k85_shell_ext_run(cmd, arg, out, out_size)) return true;
     return try_alias(cmd, arg, out, out_size);
 }
@@ -506,7 +533,7 @@ bool k85_ext_run_command(const char *cmd, const char *arg, char *out, size_t out
 static void boot_task(void *arg) {
     (void)arg;
     vTaskDelay(pdMS_TO_TICKS(3000));
-    k85_screenshot_start();   // A+B short tap = screenshot (also in safe mode)
+    if (!k85_headless_active()) k85_screenshot_start();   // A+B short tap = screenshot (also in safe mode)
 
     // Safe mode: after a crash/watchdog/brownout do not run anything
     // automatically, so a bad script or job can't cause a boot loop.

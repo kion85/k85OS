@@ -1,4 +1,5 @@
-﻿#include "disk_cleanup.h"
+#include "disk_cleanup.h"
+#include "esp_attr.h"
 #include "common.h"
 #include "input.h"
 #include "list_menu.h"
@@ -121,7 +122,7 @@ void k85_run_disk_cleanup(void) {
             return;
         }
 
-        static char labels[K85_DC_TOP_N][224];
+        static EXT_RAM_BSS_ATTR char labels[K85_DC_TOP_N][224];
         const char *items[K85_DC_TOP_N + 1];
         for (int i = 0; i < s_top_count; i++) {
             if (s_top[i].size >= 1024) {

@@ -1,4 +1,5 @@
 #include "k85os_menu.h"
+#include "esp_attr.h"
 #include "voice.h" // K85V:inc
 #include "bios_extras.h"
 #include "bios_password.h"
@@ -276,8 +277,8 @@ static void run_update_uefi_theme(void) {
 
     k85_show_message("Fetching theme list...");
 
-    static char names[K85_APPREPO_MAX_ASSETS][64];
-    static char urls[K85_APPREPO_MAX_ASSETS][256];
+    static EXT_RAM_BSS_ATTR char names[K85_APPREPO_MAX_ASSETS][64];
+    static EXT_RAM_BSS_ATTR char urls[K85_APPREPO_MAX_ASSETS][256];
     int count = 0;
 
     if (!k85_apprepo_fetch_uefi_theme_list(names, urls, K85_APPREPO_MAX_ASSETS, &count) || count == 0) {

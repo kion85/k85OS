@@ -3,6 +3,9 @@
 
 #include "M5Unified.h"
 #include "core/script_engine.h"
+#include "core/headless.h" // K85HL1
+#include "core/lang.h"
+#include "apps/k85os_menu.h"
 #include "core/config.h"
 #include "core/setup_wizard.h"
 #include "core/cpu_freq.h"
@@ -84,6 +87,9 @@ extern "C" void app_main(void) {
     k85_post_report_check(post_report, PostCode::LITTLEFS_MOUNT_FAIL, true);
     k85_themes_load_custom();
     k85_log("Config loaded");
+    k85_tr_install(); // K85RU2: Russian phrase translator for every screen
+    k85_headless_pre(); // K85HL1: no-display mode (screen goes to a RAM buffer)
+    k85_headless_start(); // K85HL1: early, before the setup wizard
 
     if (!g_config.setup_completed) {
         k85_run_setup_wizard();
@@ -118,6 +124,7 @@ extern "C" void app_main(void) {
     bool battery_ok = (batt < 0) || (batt > 20);
     k85_post_report_check(post_report, PostCode::BATTERY_LOW, battery_ok);
     k85_post_finish(post_report);
+    k85_headless_start(); // K85HL1: open AP + web UI
 
     esp_ota_mark_app_valid_cancel_rollback(); // подтверждаем, что текущая (в т.ч. только что установленная OTA) прошивка рабочая — иначе следующая перезагрузка без этой отметки откатит бутлоадер на прошлый слот
 
@@ -139,7 +146,10 @@ extern "C" void app_main(void) {
 
     while (true) {
         k85_input_update();
-        k85_step_counter_update();
+        if (!k85_headless_active()) k85_step_counter_update();
+        if (k85_headless_bios_requested()) { k85_run_bios_menu(); k85_menu_draw(); k85_btn_resync(); continue; } // K85HL2
+        { int tx_, ty_; if (k85_pointer_take(&tx_, &ty_)) { k85_wake_screen(); k85_menu_tap(tx_, ty_); k85_menu_draw(); k85_btn_resync(); continue; } } // K85PT1
+        { int sc_ = k85_scroll_take(); if (sc_ != 0) { k85_wake_screen(); int n_ = sc_ > 6 ? 6 : (sc_ < -6 ? -6 : sc_); for (int i_ = 0; i_ < (n_ < 0 ? -n_ : n_); i_++) { if (n_ > 0) k85_menu_next(); else k85_menu_prev(); } continue; } } // K85PT2
 
         int64_t now_sb_us = esp_timer_get_time();
         if (!g_config.desktop_mode && now_sb_us - last_sb_refresh_us > 1000000) { // раз в секунду

@@ -128,7 +128,7 @@ static void read_file_view(const char *full_path, const char *name, long size) {
 
 // ---------- Write: редактирование файла через многострочную клавиатуру ----------
 static void write_file_edit(const char *full_path, const char *name) {
-    static char content[K85_FILE_EDIT_MAX_BYTES + 1];
+    static EXT_RAM_BSS_ATTR char content[K85_FILE_EDIT_MAX_BYTES + 1];
     content[0] = 0;
 
     FILE *f = fopen(full_path, "rb");
@@ -138,7 +138,7 @@ static void write_file_edit(const char *full_path, const char *name) {
         fclose(f);
     }
 
-    static char edited[K85_FILE_EDIT_MAX_BYTES + 1];
+    static EXT_RAM_BSS_ATTR char edited[K85_FILE_EDIT_MAX_BYTES + 1];
     if (!k85_text_input_multiline(name, content, edited, sizeof(edited))) {
         return; // EXIT - изменения отброшены
     }
@@ -319,7 +319,7 @@ static void browse_dir(const char *root) {
     char current[256];
     snprintf(current, sizeof(current), "%s", root);
 
-    static FbEntry entries[K85_FB_MAX_ENTRIES];
+    static EXT_RAM_BSS_ATTR FbEntry entries[K85_FB_MAX_ENTRIES];
 
     while (true) {
         int n = fb_list_entries(current, entries, K85_FB_MAX_ENTRIES);
@@ -336,7 +336,7 @@ static void browse_dir(const char *root) {
         }
 
         bool at_root = (strcmp(current, root) == 0);
-        static char labels[K85_FB_MAX_ENTRIES][64];
+        static EXT_RAM_BSS_ATTR char labels[K85_FB_MAX_ENTRIES][64];
         const char *items[K85_FB_MAX_ENTRIES + 2];
 
         int idx_offset = 0;

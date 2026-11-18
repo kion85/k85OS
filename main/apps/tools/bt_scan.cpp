@@ -1,9 +1,10 @@
-﻿#include "bt_scan.h"
+#include "bt_scan.h"
 #include "common.h"
 #include "text_input.h"
 #include "log.h"
 #include "../../net/wifi.h"
 #include "../../core/config.h"
+#include "../../core/headless.h"
 
 #include "esp_bt.h"
 #include "esp_bt_main.h"
@@ -48,7 +49,7 @@ void k85_run_bt_scan(void) {
     // Освобождаем internal RAM от WiFi-драйвера перед BLE-инициализацией —
     // без этого esp_bt_controller_enable может уронить CORRUPT HEAP из-за
     // фрагментации (WiFi+BLE вместе тесно на этой памяти).
-    k85_wifi_stop();
+    if (!k85_headless_can_keep_wifi()) k85_wifi_stop();
 
     if (!bt_inited) {
         if (esp_bt_controller_get_status() == ESP_BT_CONTROLLER_STATUS_IDLE) {
@@ -65,6 +66,7 @@ void k85_run_bt_scan(void) {
             return;
         }
         esp_ble_gap_register_callback(gap_cb);
+        k85_headless_log_ram("BLE up");
         bt_inited = true;
     }
 

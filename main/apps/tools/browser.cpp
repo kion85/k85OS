@@ -3,6 +3,7 @@
 // (the bitmap font is ASCII only). A = next link / scroll, hold A = previous,
 // B = open link, hold B = menu, A+B = back / exit.
 #include "browser.h"
+#include "esp_attr.h"
 
 #ifndef K85_HOST_TEST
 #include "common.h"
@@ -1387,7 +1388,7 @@ static void browse(const char *start_url) {
             } else if (sel == 3) {
                 snprintf(pending, sizeof(pending), "%s", pg->url); load(pending, false);
             } else if (sel == 4) {
-                static char bm[BR_BM_MAX][BR_URL_MAX];
+                static EXT_RAM_BSS_ATTR char bm[BR_BM_MAX][BR_URL_MAX];
                 int n = bm_load(bm);
                 bool have = false;
                 for (int i = 0; i < n; i++) if (!strcmp(bm[i], pg->url)) have = true;
@@ -1395,7 +1396,7 @@ static void browse(const char *start_url) {
                 else draw_status(have ? "Already saved" : "Bookmarks full", "");
                 wait_ack(1200);
             } else if (sel == 5) {
-                static char bm[BR_BM_MAX][BR_URL_MAX];
+                static EXT_RAM_BSS_ATTR char bm[BR_BM_MAX][BR_URL_MAX];
                 int n = bm_load(bm);
                 if (n == 0) { draw_status("No bookmarks", ""); wait_ack(1200); }
                 else {
@@ -1436,7 +1437,7 @@ void k85_run_browser(void) {
         if (sel == 0) ask_search("Search:", "https://lite.duckduckgo.com/lite/?q=%s", url, sizeof(url));
         else if (sel == 1) ask_url(url, sizeof(url));
         else if (sel == 2) {
-            static char bm[BR_BM_MAX][BR_URL_MAX];
+            static EXT_RAM_BSS_ATTR char bm[BR_BM_MAX][BR_URL_MAX];
             int n = bm_load(bm);
             if (n == 0) { draw_status("No bookmarks yet", "hold B in a page"); wait_ack(2000); continue; }
             static char lab[BR_BM_MAX][40];

@@ -8,6 +8,7 @@
 #include "../net/wifi.h"
 #include "../net/ssh_server.h"
 #include "../core/config.h"
+#include "../core/headless.h"
 
 #include "M5Unified.h"
 #include "freertos/FreeRTOS.h"
@@ -144,7 +145,7 @@ void k85_run_air_mouse_ble(void) {
     // Освобождаем internal RAM от WiFi-драйвера перед BLE-инициализацией —
     // без этого BLE-контроллер может уронить CORRUPT HEAP из-за
     // фрагментации памяти (WiFi+BLE вместе тесно на этой памяти).
-    k85_wifi_stop();
+    if (!k85_headless_can_keep_wifi()) k85_wifi_stop();
 
     if (!k85_hid_stack_init()) {
         k85_show_message("BLE HID init\nfailed");

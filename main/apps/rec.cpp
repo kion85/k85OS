@@ -3,6 +3,7 @@
 // image for the ESP32-S3, writes it into the free slot and goes back to the boot loader menu.
 // No SD card / nothing flashed -> back to the boot loader menu as well.
 #include "rec.h"
+#include "esp_attr.h"
 #include "rec_pins.h"
 #include "common.h"
 #include "theme.h"
@@ -245,7 +246,7 @@ void k85_run_rec(void) {
         int n = scan_dir(REC_MOUNT, 0);
         n = scan_dir(REC_MOUNT "/firmware", n);
         if (n == 0) { rec_screen("No .bin files", "put firmware on the card", "(root or /firmware)"); rec_wait(3500); break; }
-        static char labels[REC_MAX + 1][40];
+        static EXT_RAM_BSS_ATTR char labels[REC_MAX + 1][40];
         const char *items[REC_MAX + 1];
         const char *keys[REC_MAX + 1];
         for (int i = 0; i < n; i++) {

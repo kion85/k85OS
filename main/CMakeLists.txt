@@ -1,3 +1,4 @@
+file(GLOB LUA_SRCS "${CMAKE_CURRENT_LIST_DIR}/lua/*.c")
 idf_component_register(
     SRCS "k85os_idf.cpp"
          "core/config.cpp"
@@ -66,6 +67,8 @@ idf_component_register(
          "ui/lock_screen_settings.cpp"
          "net/app_repo.cpp"
          "apps/wifi_scanner.cpp"
+         "apps/kstore.cpp"
+         "apps/messenger.cpp"
          "apps/apps_menu.cpp"
          "apps/router_menu.cpp"
          "net/firmware_flash.cpp"
@@ -124,7 +127,12 @@ idf_component_register(
          "core/screenshot.cpp"
          "core/line_edit.cpp"
 	 "core/cron.cpp"
-    INCLUDE_DIRS "." "core" "ui" "steps" "system" "net" "apps" "apps/games" "apps/tools" "ble_hid"
+         "core/js_engine.cpp"
+         "core/lang.cpp"
+         "core/lang_tr.cpp"
+         "core/headless.cpp"
+         ${LUA_SRCS}
+    INCLUDE_DIRS "." "lua" "core" "ui" "steps" "system" "net" "apps" "apps/games" "apps/tools" "ble_hid"
     PRIV_REQUIRES fatfs sdmmc driver spi_flash bootloader_support efuse json esp_netif esp_driver_tsens esp_wifi nvs_flash esp_event esp_driver_i2c esp_driver_gpio bt esp_driver_rmt esp_https_ota esp_http_client app_update mbedtls esp-libhelix-mp3 mbedtls wolfssl wolfssh esp_psram esp_websocket_client mqtt mdns
 )
 
@@ -146,3 +154,8 @@ target_link_libraries(${k85_m5gfx_lib} PUBLIC idf::esp_psram)
 
 # K85_FMT_TRUNC: -Os makes GCC format/string truncation analysis stricter; keep these warnings non-fatal for main
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-error=format-truncation -Wno-error=format-overflow -Wno-error=stringop-truncation)
+
+# K85JS1: Elk (mini JavaScript) is third-party C code, no warnings from it
+set_source_files_properties(${LUA_SRCS} PROPERTIES COMPILE_OPTIONS "-w" COMPILE_DEFINITIONS "LUAI_MAXCCALLS=60")
+
+target_compile_definitions(${COMPONENT_LIB} PRIVATE LUA_32BITS)

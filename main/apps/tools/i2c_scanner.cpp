@@ -2,6 +2,7 @@
 // K85I2C1: the scanner uses the I2C buses that M5Unified already owns (Grove port and the internal bus),
 // so it works on any board without knowing the pins.
 #include "i2c_scanner.h"
+#include "esp_attr.h"
 #include "common.h"
 #include "text_input.h"
 #include "list_menu.h"
@@ -59,7 +60,7 @@ static void scan_bus(BUS &bus, const char *title) {
         return;
     }
 
-    static char lines_buf[40][32];
+    static EXT_RAM_BSS_ATTR char lines_buf[40][32];
     static const char *lines[40];
     int n_lines = 0;
     static uint8_t found[40];

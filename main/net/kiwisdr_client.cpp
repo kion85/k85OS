@@ -1,4 +1,5 @@
 #include "kiwisdr_client.h"
+#include "esp_attr.h"
 #include "list_menu.h"
 #include "text_input.h"
 #include "common.h"
@@ -254,7 +255,7 @@ static void ws_event_handler(void *handler_args, esp_event_base_t base, int32_t 
             }
             if (data->op_code == 0x02 && data->data_len > 0) {
                 // K85BUG8: a frame can arrive split into several chunks (payload_offset > 0): collect it, then parse
-                static uint8_t k85_frame[1280];
+                static EXT_RAM_BSS_ATTR uint8_t k85_frame[1280];
                 int k85_off = data->payload_offset, k85_n = data->data_len, k85_tot = data->payload_len;
                 if (k85_tot <= (int)sizeof(k85_frame) && k85_off >= 0 && k85_off + k85_n <= k85_tot) {
                     memcpy(k85_frame + k85_off, data->data_ptr, k85_n);

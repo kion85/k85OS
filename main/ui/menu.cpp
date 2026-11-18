@@ -21,6 +21,10 @@
 #include "browser.h" // K85BROWSER
 #include "linux_menu.h" // K85LNX
 #include "../apps/tools/json_interpreter.h"
+#include "kstore.h" // K85STORE1
+#include "lang.h" // K85RU1
+#include "messenger.h" // K85MSG1
+#include "js_engine.h" // K85JS1
 #include "rtc_ntp.h"
 #include "clock_menu.h"
 #include "../apps/wifi_menu.h"
@@ -39,7 +43,7 @@
 
 static const char *const K85_MENU_ITEMS[] = {
     "Low tone", "High tone", "Both tones", "Cube", "Colors",
-    "Clock", "WiFi", "Browser", "Apps", "Tools", "Games", "Linux", "Interpreter", "Settings", "System info", "Logs", "Notifications",
+    "Clock", "WiFi", "Browser", "KStore", "Messenger", "Apps", "Tools", "Games", "Linux", "Interpreter", "Lua", "Settings", "System info", "Logs", "Notifications",
 };
 #define K85_MENU_ITEM_COUNT (int)(sizeof(K85_MENU_ITEMS) / sizeof(K85_MENU_ITEMS[0]))
 
@@ -141,6 +145,16 @@ static void draw_menu_icon(int cx, int cy, int r, const char *name, uint32_t col
         M5.Display.fillTriangle(cx - 2, cy - r / 2 + 3, cx + 2, cy - r / 2 + 3, cx, cy - r / 2 + 6, col);  // beak
         M5.Display.drawLine(cx - r / 3, cy + r, cx - r / 6, cy + r, col);         // feet
         M5.Display.drawLine(cx + r / 6, cy + r, cx + r / 3, cy + r, col);
+    } else if (!strcmp(name, "Messenger")) {  // K85MSG1
+        d.drawRoundRect(cx - r, cy - r + 2, r * 2, r + r / 2, 3, col);
+        d.fillTriangle(cx - r / 2, cy + r / 2 + 2, cx - r / 4, cy + r / 2 + 2, cx - r / 2 - 2, cy + r, col);
+        d.drawFastHLine(cx - r / 2, cy - r / 3, r, col);
+        d.drawFastHLine(cx - r / 2, cy, r - 2, col);
+    } else if (!strcmp(name, "KStore")) {  // K85STORE1
+        d.drawRect(cx - r + 2, cy - r / 3, r * 2 - 4, r + r / 2, col);
+        d.drawLine(cx - r / 2, cy - r / 3, cx - r / 4, cy - r, col);
+        d.drawLine(cx + r / 2, cy - r / 3, cx + r / 4, cy - r, col);
+        d.drawLine(cx - r / 4, cy - r, cx + r / 4, cy - r, col);
     } else if (!strcmp(name, "Tools")) {
         d.fillCircle(cx - r/2, cy - r/2, r/3, col);
         d.drawLine(cx - r/2, cy - r/2, cx + r/2, cy + r/2, col);
@@ -171,7 +185,7 @@ static void draw_menu_icon(int cx, int cy, int r, const char *name, uint32_t col
         d.fillCircle(cx, cy - 2, r/2, col);
         d.fillRect(cx - r/4, cy + r/3, r/2, 2, col);
         d.drawCircle(cx, cy - r - 1, 2, col);
-    } else if (!strcmp(name, "Interpreter")) {
+    } else if (!strcmp(name, "Interpreter") || !strcmp(name, "Lua")) {
         d.drawLine(cx - r/2, cy - r/2, cx - r/3, cy - r/4, col);
         d.drawLine(cx - r/3, cy - r/4, cx - r/3, cy + r/4, col);
         d.drawLine(cx - r/3, cy + r/4, cx - r/2, cy + r/2, col);
@@ -228,11 +242,11 @@ static void draw_menu_list(void) {
         if (i == s_selected) {
             M5.Display.setTextColor(0x000000, accent);
             M5.Display.setCursor(4, yy);
-            M5.Display.printf(">%s", items[i]);
+            M5.Display.printf(">%s", k85_tr(items[i]));
         } else {
             k85_wall_text_main(fg, bg);
             M5.Display.setCursor(4, yy);
-            M5.Display.printf(" %s", items[i]);
+            M5.Display.printf(" %s", k85_tr(items[i]));
         }
     }
     M5.Display.setTextSize(1);
@@ -311,7 +325,7 @@ static void draw_menu_list_icons(void) {
         draw_menu_icon(14, yy + 6, 8, items[i], item_fg);
         k85_wall_text_main(item_fg, item_bg);
         M5.Display.setCursor(26, yy + 2);
-        M5.Display.print(items[i]);
+        M5.Display.print(k85_tr(items[i]));
     }
 
     M5.Display.setTextColor(0xAAAAAA, bg);
@@ -382,8 +396,8 @@ static void draw_menu_grid(void) {
         int max_chars = (cell_w - 4) / 6;
         if (max_chars > 15) max_chars = 15;
         if (max_chars < 1) max_chars = 1;
-        snprintf(short_label, sizeof(short_label), "%.*s", max_chars, items[i]);
-        int tx = col * cell_w + (cell_w - (int)strlen(short_label) * 6) / 2;
+        k85_u8trunc(short_label, sizeof(short_label), k85_tr(items[i]), max_chars);
+        int tx = col * cell_w + (cell_w - k85_u8len(short_label) * 6) / 2;
         if (tx < col * cell_w) tx = col * cell_w + 1;
         M5.Display.setCursor(tx, start_y + row * cell_h + cell_h - 12);
         M5.Display.print(short_label);
@@ -619,7 +633,7 @@ static void run_action(int index) {
     } else if (!strcmp(item, "Settings")) {
         k85_run_settings_menu();
     } else {
-        if (!strcmp(item, "Interpreter")) { k85_run_json_interpreter(); } else { run_placeholder(item); }
+        if (!strcmp(item, "Messenger")) { k85_run_messenger(); } else if (!strcmp(item, "Lua")) { k85_run_js_menu(); } else if (!strcmp(item, "KStore")) { k85_run_kstore(); } else if (!strcmp(item, "Interpreter")) { k85_run_json_interpreter(); } else { run_placeholder(item); }
     }
 }
 
@@ -715,8 +729,8 @@ static void draw_menu_desktop_icons(const char *const items[], int count) {
         int max_chars = (cell_w - 4) / 6;
         if (max_chars > 15) max_chars = 15;
         if (max_chars < 1) max_chars = 1;
-        snprintf(short_label, sizeof(short_label), "%.*s", max_chars, items[i]);
-        int tx = col * cell_w + (cell_w - (int)strlen(short_label) * 6) / 2;
+        k85_u8trunc(short_label, sizeof(short_label), k85_tr(items[i]), max_chars);
+        int tx = col * cell_w + (cell_w - k85_u8len(short_label) * 6) / 2;
         if (tx < col * cell_w) tx = col * cell_w + 1;
         M5.Display.setCursor(tx, start_y + row * cell_h + cell_h - 12);
         M5.Display.print(short_label);
@@ -819,4 +833,28 @@ void k85_menu_desktop_tick(void) {
 void k85_menu_activate(void) {
     run_action(s_selected);
     k85_menu_draw();
+}
+// K85PT1: tap on a main menu item (from the web page)
+void k85_menu_tap(int x, int y) {
+    const char *items[K85_MENU_ITEM_COUNT];
+    int count = get_filtered_menu(items, K85_MENU_ITEM_COUNT);
+    if (count <= 0 || g_config.desktop_mode) return;
+    int W = M5.Display.width(), H = M5.Display.height();
+    int hit = -1;
+    if (g_config.menu_ui_style == 1) {
+        const int cols = 4, rows = 2, start_y = 16;
+        int grid_h = H - start_y - 10, cw = W / cols, ch = grid_h / rows;
+        if (y >= start_y && y < start_y + grid_h && ch > 0 && cw > 0) {
+            int col = x / cw, row = (y - start_y) / ch;
+            if (col < cols && row < rows) hit = (s_selected / (cols * rows)) * (cols * rows) + row * cols + col;
+        }
+    } else {
+        int line_h = (g_config.menu_ui_style == 2) ? 22 : 26;
+        int start_y = (g_config.menu_ui_style == 2) ? 16 : 14;
+        if (y >= start_y) hit = s_scroll_offset + (y - start_y) / line_h;
+    }
+    if (hit < 0 || hit >= count) return;
+    s_selected = hit;
+    k85_menu_draw();
+    k85_menu_activate();
 }

@@ -1,4 +1,5 @@
 #include "list_menu.h"
+#include "lang.h"
 #include "look.h"
 #include "voice.h" // K85V:inc
 #include <cstdio>
@@ -30,7 +31,7 @@ static void draw_title_and_bar(const char *title, uint32_t accent) {
     if (maxc < 0) maxc = 0;
     if (maxc > 39) maxc = 39;
     char t[40];
-    snprintf(t, sizeof(t), "%.*s", maxc, title);
+    k85_u8trunc(t, sizeof(t), k85_tr(title), maxc);
     M5.Display.setTextSize(1);
     if (k85_banner_active()) M5.Display.setTextColor(accent); else M5.Display.setTextColor(accent, sbbg);
     M5.Display.setCursor(4, 2);
@@ -55,9 +56,9 @@ static inline void draw_item_icon(K85IconDrawFn icon_fn, int cx, int cy, int r,
 static void format_label(char *out, size_t out_size, const char *item,
                           const char *const score_keys[], int i) {
     if (score_keys && score_keys[i]) {
-        snprintf(out, out_size, "%s (%d)", item, k85_get_high_score(score_keys[i]));
+        snprintf(out, out_size, "%s (%d)", k85_tr(item), k85_get_high_score(score_keys[i]));
     } else {
-        snprintf(out, out_size, "%s", item);
+        snprintf(out, out_size, "%s", k85_tr(item));
     }
 }
 
@@ -173,8 +174,8 @@ static void draw_list_grid(const char *title, const char *const items[], int cou
         int max_chars = (cell_w - 4) / 6;
         if (max_chars > 15) max_chars = 15;
         if (max_chars < 1) max_chars = 1;
-        snprintf(short_label, sizeof(short_label), "%.*s", max_chars, label);
-        int tx = col * cell_w + (cell_w - (int)strlen(short_label) * 6) / 2;
+        k85_u8trunc(short_label, sizeof(short_label), label, max_chars);
+        int tx = col * cell_w + (cell_w - k85_u8len(short_label) * 6) / 2;
         if (tx < col * cell_w) tx = col * cell_w + 1;
         M5.Display.setCursor(tx, start_y + row * cell_h + cell_h - 12);
         M5.Display.print(short_label);
@@ -360,6 +361,8 @@ int k85_run_list_menu(const char *title, const char *const items[], int count,
                 k85_wait_ab_release();
                 return -1;
             }
+            { int tx_, ty_; if (k85_pointer_take(&tx_, &ty_)) { int hi_ = hit_test_item(style, scroll, (sel / 8) * 8, count, tx_, ty_); if (hi_ >= 0) { k85_wake_screen(); if (!strcmp(items[hi_], "Back")) return -1; return hi_; } } } // K85PT1
+            { int sc_ = k85_scroll_take(); if (sc_ != 0) { int ns_ = sel + sc_; if (ns_ < 0) ns_ = 0; if (ns_ >= count) ns_ = count - 1; if (ns_ != sel) { k85_wake_screen(); sel = ns_; break; } } } // K85PT2
             if (k85_voice_take_notify()) { k85_voice_flash_ready(); break; }
             // K85CH1: A+B is an exit gesture only. While both buttons are down nothing else may fire
             if (k85_check_ab_hold()) { chord_latched = true; b_tap_pending = false; a_hold_active = false; }

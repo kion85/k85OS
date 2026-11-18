@@ -158,6 +158,7 @@ static void shell_run_simple(const char *cmd_full, char *out, size_t out_size) {
             "  cron [on|off|reload|list], ftp [start|stop], ftppass <user> <pass>\r\n"
             "  grep, head, tail, wc, cp, mv, rm, mkdir, touch, date, df, du\r\n"
             "  hostname, ifconfig, nslookup, wget, curl, watch, neofetch, at, tar, scrshot\r\n"
+            "  lua <file.lua> | lua -e \"code\"  (Lua 5.4)\r\n"
             "  pipes | and redirects > >> are supported\r\n"
             "  reboot, exit\r\n");
     } else if (!strcmp(cmd, "ps") || !strcmp(cmd, "htop")) {

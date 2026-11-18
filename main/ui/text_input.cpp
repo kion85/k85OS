@@ -19,14 +19,22 @@
 #include "esp_timer.h"
 
 static int64_t k85_ti_ticks_ms() { return esp_timer_get_time() / 1000; }
+// K85RU1: Russian caps -> lower case on a 2-byte UTF-8 letter, UTF-8 safe tail of a string
+static void k85_ru_lower(char *b) {
+    unsigned char a = (unsigned char)b[0], c = (unsigned char)b[1];
+    if (a == 0xD0 && c >= 0x90 && c <= 0x9F) b[1] = (char)(c + 0x20);
+    else if (a == 0xD0 && c >= 0xA0 && c <= 0xAF) { b[0] = (char)0xD1; b[1] = (char)(c - 0x20); }
+    else if (a == 0xD0 && c == 0x81) { b[0] = (char)0xD1; b[1] = (char)0x91; }
+}
+static const char *k85_utf8_tail(const char *s, int off) { while (s[off] && (((unsigned char)s[off]) & 0xC0) == 0x80) off++; return s + off; }
 
 static const char *KB_ROW0[] = {"1","2","3","4","5","6","7","8","9","0"};
 static const char *KB_ROW1_EN[] = {"Q","W","E","R","T","Y","U","I","O","P"};
 static const char *KB_ROW2_EN[] = {"A","S","D","F","G","H","J","K","L"};
 static const char *KB_ROW3_EN[] = {"Z","X","C","V","B","N","M","-","_","."};
-static const char *KB_ROW1_RU[] = {"?","?","?","?","?","?","?","?","?","?","?","?"};
-static const char *KB_ROW2_RU[] = {"?","?","?","?","?","?","?","?","?","?","?"};
-static const char *KB_ROW3_RU[] = {"?","?","?","?","?","?","?","?","?","?","."};
+static const char *KB_ROW1_RU[] = {"Й","Ц","У","К","Е","Н","Г","Ш","Щ","З","Х","Ъ"};
+static const char *KB_ROW2_RU[] = {"Ф","Ы","В","А","П","Р","О","Л","Д","Ж","Э"};
+static const char *KB_ROW3_RU[] = {"Я","Ч","С","М","И","Т","Ь","Б","Ю","Ё","."};
 static const char *KB_ROW4_EN[] = {"SPACE","DEL","EXIT","OK","RU","CAPS"};
 static const char *KB_ROW4_RU[] = {"SPACE","DEL","EXIT","OK","EN","CAPS"};
 
@@ -99,7 +107,7 @@ bool k85_text_input(const char *prompt, const char *initial, char *out, size_t o
         if (len <= 16) {
             M5.Display.printf("%s_", text);
         } else {
-            M5.Display.printf("...%s_", text + (len - 13));
+            M5.Display.printf("...%s_", k85_utf8_tail(text, len - 13));
         }
 
         if (kb_hidden) {
@@ -210,7 +218,7 @@ bool k85_text_input(const char *prompt, const char *initial, char *out, size_t o
             }
             a_was_down = a_down_now;
         }
-        if (k85_btn_b_pressed()) {
+        bool k85_tap = false; { int tx_, ty_; if (k85_pointer_take(&tx_, &ty_)) { if (kb_hidden) { kb_hidden = false; last_activity_ms = k85_ti_ticks_ms(); draw(); } else { int top_ = 38; int rh_ = (H - top_ - 2) / 5; if (rh_ < 12) rh_ = 12; int r_ = (ty_ - top_) / rh_; if (ty_ >= top_ && r_ >= 0 && r_ < 5) { int n_ = kb.counts[r_]; int c_ = tx_ / (W / n_); if (c_ >= 0 && c_ < n_) { st_row = r_; st_col = c_; k85_tap = true; } } } } } if (k85_btn_b_pressed() || k85_tap) {
             k85_wake_screen();
             const char *key = kb.rows[st_row][st_col];
             if (!strcmp(key, "SPACE")) {
@@ -218,7 +226,7 @@ bool k85_text_input(const char *prompt, const char *initial, char *out, size_t o
                 if (l + 1 < sizeof(text)) { text[l] = ' '; text[l + 1] = 0; }
             } else if (!strcmp(key, "DEL")) {
                 size_t l = strlen(text);
-                if (l > 0) text[l - 1] = 0;
+                if (l > 0) { l--; while (l > 0 && (((unsigned char)text[l]) & 0xC0) == 0x80) l--; text[l] = 0; }
             } else if (!strcmp(key, "EXIT")) {
                 return false;
             } else if (!strcmp(key, "OK")) {
@@ -232,9 +240,7 @@ bool k85_text_input(const char *prompt, const char *initial, char *out, size_t o
             } else {
                 size_t l = strlen(text);
                 if (l + 1 < sizeof(text)) {
-                    char c = key[0];
-                    if (!is_caps && !is_ru) c = (char)tolower((unsigned char)c);
-                    text[l] = c; text[l + 1] = 0;
+                    if (is_ru && (unsigned char)key[0] >= 0xD0 && key[1]) { char b2[3] = { key[0], key[1], 0 }; if (!is_caps) k85_ru_lower(b2); if (l + 2 < sizeof(text)) { text[l] = b2[0]; text[l + 1] = b2[1]; text[l + 2] = 0; } } else { char c = key[0]; if (!is_caps && !is_ru) c = (char)tolower((unsigned char)c); text[l] = c; text[l + 1] = 0; }
                 }
             }
             draw();
@@ -296,7 +302,7 @@ bool k85_text_input_multiline(const char *prompt, const char *initial, char *out
         M5.Display.setTextColor(fg, bg);
         M5.Display.setCursor(4, 14);
         M5.Display.setTextWrap(true, false);
-        M5.Display.printf("%s_", text + start);
+        M5.Display.printf("%s_", k85_utf8_tail(text, (int)start));
         M5.Display.setTextWrap(false, false);
 
         if (kb_hidden) {
@@ -406,7 +412,7 @@ bool k85_text_input_multiline(const char *prompt, const char *initial, char *out
             }
             a_was_down = a_down_now;
         }
-        if (k85_btn_b_pressed()) {
+        bool k85_tap = false; { int tx_, ty_; if (k85_pointer_take(&tx_, &ty_)) { if (kb_hidden) { kb_hidden = false; last_activity_ms = k85_ti_ticks_ms(); draw(); } else { int top_ = 48; int rh_ = (H - top_ - 2) / 5; if (rh_ < 12) rh_ = 12; int r_ = (ty_ - top_) / rh_; if (ty_ >= top_ && r_ >= 0 && r_ < 5) { int n_ = kb.counts[r_]; int c_ = tx_ / (W / n_); if (c_ >= 0 && c_ < n_) { st_row = r_; st_col = c_; k85_tap = true; } } } } } if (k85_btn_b_pressed() || k85_tap) {
             k85_wake_screen();
             const char *key = kb.rows[st_row][st_col];
             if (!strcmp(key, "SPACE")) {
@@ -417,7 +423,7 @@ bool k85_text_input_multiline(const char *prompt, const char *initial, char *out
                 if (l + 1 < sizeof(text)) { text[l] = '\n'; text[l + 1] = 0; }
             } else if (!strcmp(key, "DEL")) {
                 size_t l = strlen(text);
-                if (l > 0) text[l - 1] = 0;
+                if (l > 0) { l--; while (l > 0 && (((unsigned char)text[l]) & 0xC0) == 0x80) l--; text[l] = 0; }
             } else if (!strcmp(key, "EXIT")) {
                 return false;
             } else if (!strcmp(key, "OK")) {
@@ -431,9 +437,7 @@ bool k85_text_input_multiline(const char *prompt, const char *initial, char *out
             } else {
                 size_t l = strlen(text);
                 if (l + 1 < sizeof(text)) {
-                    char c = key[0];
-                    if (!is_caps && !is_ru) c = (char)tolower((unsigned char)c);
-                    text[l] = c; text[l + 1] = 0;
+                    if (is_ru && (unsigned char)key[0] >= 0xD0 && key[1]) { char b2[3] = { key[0], key[1], 0 }; if (!is_caps) k85_ru_lower(b2); if (l + 2 < sizeof(text)) { text[l] = b2[0]; text[l + 1] = b2[1]; text[l + 2] = 0; } } else { char c = key[0]; if (!is_caps && !is_ru) c = (char)tolower((unsigned char)c); text[l] = c; text[l + 1] = 0; }
                 }
             }
             draw();

@@ -162,6 +162,7 @@ static void terminal_show_output_scrollable(const char *raw_text) {
     while (true) {
         k85_input_update();
         if (k85_ab_held(500)) { k85_wait_ab_release(); return; }
+        { int sc_ = k85_scroll_take(); if (sc_ != 0) { int mx_ = wrapped_count > visible_lines ? wrapped_count - visible_lines : 0; int ns_ = scroll + sc_; if (ns_ < 0) ns_ = 0; if (ns_ > mx_) ns_ = mx_; if (ns_ != scroll) { scroll = ns_; redraw(); } } } // K85PT2
         if (k85_btn_a_pressed()) {
             if (wrapped_count > visible_lines) {
                 scroll += visible_lines;

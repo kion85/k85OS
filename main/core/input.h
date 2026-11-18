@@ -19,3 +19,12 @@ bool k85_ab_held(uint32_t ms);
 
 // Аналог wait_ab_release(): блокирует, пока обе кнопки не отпустят
 void k85_wait_ab_release(void);
+// K85PT1: a tap from the web page (screen coordinates). take() returns true once, only if the tap is fresh (< 0.6 s)
+void k85_pointer_post(int x, int y);
+bool k85_pointer_take(int *x, int *y);
+// K85PT2: scroll steps from a drag / mouse wheel on the web page (+ = down). take() returns the sum since the last call.
+void k85_scroll_post(int n);
+int k85_scroll_take(void);
+// K85PT3: age of a gesture that nobody has taken yet (false = nothing pending)
+bool k85_pointer_age(int64_t *age_us);
+bool k85_scroll_age(int64_t *age_us);

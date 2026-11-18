@@ -1,4 +1,5 @@
-﻿#include "notifications.h"
+#include "notifications.h"
+#include "esp_attr.h"
 #include "text_input.h"
 
 #include <cstring>
@@ -54,7 +55,7 @@ int k85_notifications_unread_count(void) {
 
 void k85_run_notifications_screen(void) {
     ensure_mutex();
-    static char lines_buf[K85_NOTIF_MAX][K85_NOTIF_TEXT_LEN];
+    static EXT_RAM_BSS_ATTR char lines_buf[K85_NOTIF_MAX][K85_NOTIF_TEXT_LEN];
     const char *lines[K85_NOTIF_MAX];
     int n = 0;
 

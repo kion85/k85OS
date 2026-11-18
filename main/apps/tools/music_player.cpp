@@ -1,4 +1,5 @@
 #include "music_player.h"
+#include "esp_attr.h"
 #include "common.h"
 #include "theme.h"
 #include "list_menu.h"
@@ -78,13 +79,13 @@ static bool browse_for_wav(char *out_path, size_t out_size, const char *root) {
     char current[256];
     snprintf(current, sizeof(current), "%s", root);
 
-    static MpEntry entries[K85_MP_MAX_ENTRIES];
+    static EXT_RAM_BSS_ATTR MpEntry entries[K85_MP_MAX_ENTRIES];
 
     while (true) {
         int n = list_dir_entries(current, entries, K85_MP_MAX_ENTRIES);
 
         bool at_root = (strcmp(current, root) == 0);
-        static char labels[K85_MP_MAX_ENTRIES][80];
+        static EXT_RAM_BSS_ATTR char labels[K85_MP_MAX_ENTRIES][80];
         const char *items[K85_MP_MAX_ENTRIES + 2];
 
         int idx_offset = 0;
