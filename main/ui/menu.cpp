@@ -24,6 +24,7 @@
 #include "kstore.h" // K85STORE1
 #include "lang.h" // K85RU1
 #include "messenger.h" // K85MSG1
+#include "notes.h" // K85NOTES1
 #include "js_engine.h" // K85JS1
 #include "rtc_ntp.h"
 #include "clock_menu.h"
@@ -43,7 +44,7 @@
 
 static const char *const K85_MENU_ITEMS[] = {
     "Low tone", "High tone", "Both tones", "Cube", "Colors",
-    "Clock", "WiFi", "Browser", "KStore", "Messenger", "Apps", "Tools", "Games", "Linux", "Interpreter", "Lua", "Settings", "System info", "Logs", "Notifications",
+    "Clock", "WiFi", "Browser", "KStore", "Messenger", "Notes", "Apps", "Tools", "Games", "Linux", "Interpreter", "Lua", "Settings", "System info", "Logs", "Notifications",
 };
 #define K85_MENU_ITEM_COUNT (int)(sizeof(K85_MENU_ITEMS) / sizeof(K85_MENU_ITEMS[0]))
 
@@ -155,6 +156,11 @@ static void draw_menu_icon(int cx, int cy, int r, const char *name, uint32_t col
         d.drawLine(cx - r / 2, cy - r / 3, cx - r / 4, cy - r, col);
         d.drawLine(cx + r / 2, cy - r / 3, cx + r / 4, cy - r, col);
         d.drawLine(cx - r / 4, cy - r, cx + r / 4, cy - r, col);
+    } else if (!strcmp(name, "Notes")) {  // K85NOTES1
+        d.drawRect(cx - r + 3, cy - r, r * 2 - 6, r * 2, col);
+        d.drawFastHLine(cx - r / 2, cy - r / 2, r, col);
+        d.drawFastHLine(cx - r / 2, cy, r, col);
+        d.drawFastHLine(cx - r / 2, cy + r / 2, r / 2, col);
     } else if (!strcmp(name, "Tools")) {
         d.fillCircle(cx - r/2, cy - r/2, r/3, col);
         d.drawLine(cx - r/2, cy - r/2, cx + r/2, cy + r/2, col);
@@ -633,7 +639,7 @@ static void run_action(int index) {
     } else if (!strcmp(item, "Settings")) {
         k85_run_settings_menu();
     } else {
-        if (!strcmp(item, "Messenger")) { k85_run_messenger(); } else if (!strcmp(item, "Lua")) { k85_run_js_menu(); } else if (!strcmp(item, "KStore")) { k85_run_kstore(); } else if (!strcmp(item, "Interpreter")) { k85_run_json_interpreter(); } else { run_placeholder(item); }
+        if (!strcmp(item, "Notes")) { k85_run_notes(); } else if (!strcmp(item, "Messenger")) { k85_run_messenger(); } else if (!strcmp(item, "Lua")) { k85_run_js_menu(); } else if (!strcmp(item, "KStore")) { k85_run_kstore(); } else if (!strcmp(item, "Interpreter")) { k85_run_json_interpreter(); } else { run_placeholder(item); }
     }
 }
 

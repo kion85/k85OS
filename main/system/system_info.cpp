@@ -21,7 +21,7 @@
 #include <cstdio>
 
 #define K85_FW_NAME "k85OS"
-#define K85_FW_VERSION "v8.5"
+#define K85_FW_VERSION "v8.9"
 
 // Причина последнего сброса/загрузки - ESP-IDF хранит её в RTC-памяти,
 // переживает даже панику/краш, отдельное хранилище не требуется.

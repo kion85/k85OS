@@ -9,6 +9,7 @@
 
 struct Ph { const char *en; const char *ru; };
 static const Ph k_ph[] = {
+    /* K85NOTES2: Notes app */ {"Notes","Заметки"}, {"+ New note","+ Новая заметка"}, {"New note","Новая заметка"}, {"Edit note","Правка заметки"}, {"View note","Просмотр заметки"}, {"Delete note","Удалить заметку"}, {"Back to list","Назад к списку"}, {"Keep it","Оставить"}, {"Yes, delete","Да, удалить"}, {"Notes full","Список полон"}, {"No memory","Нет памяти"}, {"Empty: not saved","Пусто: не сохранено"}, {"Save failed","Ошибка сохранения"}, {"(empty)","(пусто)"},
     /* hints */
     {"A+B (hold) = exit","A+B (удерж.) = выход"}, {"A+B hold to unlock","A+B удерж. = разблок."}, {"A+B=back","A+B=назад"},
     {"A+B=cancel","A+B=отмена"}, {"A+B=exit","A+B=выход"}, {"A=+10%","A=+10%"}, {"A=cycle B=apply&back","A=смена B=ОК и назад"},

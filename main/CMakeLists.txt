@@ -69,6 +69,7 @@ idf_component_register(
          "apps/wifi_scanner.cpp"
          "apps/kstore.cpp"
          "apps/messenger.cpp"
+         "apps/notes.cpp"
          "apps/apps_menu.cpp"
          "apps/router_menu.cpp"
          "net/firmware_flash.cpp"
