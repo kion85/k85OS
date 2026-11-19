@@ -598,6 +598,11 @@ static void ftp_task(void *arg) {
 
         fd_set rf;
         FD_ZERO(&rf);
+        if (s_listen < 0) {  // K85FIX1: no listener yet (waiting for an IP) - FD_SET(-1) would corrupt the stack
+            vTaskDelay(pdMS_TO_TICKS(500));
+            if (s_use_idle && now_ms() - last_activity > FTP_IDLE_STOP_MS) s_run = false;
+            continue;
+        }
         FD_SET(s_listen, &rf);
         struct timeval tv = {1, 0};
         int r = select(s_listen + 1, &rf, nullptr, nullptr, &tv);

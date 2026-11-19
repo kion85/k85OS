@@ -281,7 +281,8 @@ static void handle_router_connection(int conn_fd, const char *ssid, bool is_gues
         snprintf(redir, sizeof(redir), "/?key=%s", s_web_key);
         send_redirect(conn_fd, redir);
     } else {
-        static char *body = (char *)heap_caps_malloc(6144, MALLOC_CAP_SPIRAM);
+        static char *body = nullptr;  // K85FIX4: a function-static initializer runs only once - a failed first malloc stayed failed forever
+        if (!body) body = (char *)heap_caps_malloc(6144, MALLOC_CAP_SPIRAM);
         if (!body) {
             ESP_LOGE("k85_web", "router_menu: body alloc failed (PSRAM OOM?)");
             return;

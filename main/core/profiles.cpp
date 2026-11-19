@@ -1,4 +1,4 @@
-﻿#include "core/profiles.h"
+#include "core/profiles.h"
 #include "core/config.h"
 #include "core/theme.h"
 #include "core/sound.h"
@@ -61,8 +61,8 @@ void k85_profile_apply(int idx) {
     if (p->wifi_ssid[0] != '\0' && strcmp(g_config.wifi_ssid, p->wifi_ssid) != 0) {
         for (int i = 0; i < g_config.wifi_networks_count; i++) {
             if (strcmp(g_config.wifi_networks[i].ssid, p->wifi_ssid) == 0) {
-                strncpy(g_config.wifi_ssid, g_config.wifi_networks[i].ssid, sizeof(g_config.wifi_ssid));
-                strncpy(g_config.wifi_password, g_config.wifi_networks[i].password, sizeof(g_config.wifi_password));
+                snprintf(g_config.wifi_ssid, sizeof(g_config.wifi_ssid), "%s", g_config.wifi_networks[i].ssid);  // K85FIX3: strncpy did not terminate a full-length string
+                snprintf(g_config.wifi_password, sizeof(g_config.wifi_password), "%s", g_config.wifi_networks[i].password);
                 g_config.wifi_saved = true;
                 k85_wifi_connect_saved();
                 break;

@@ -187,7 +187,7 @@ bool k85_headless_pre(void) {
     s_fb_mem = (uint8_t *)heap_caps_calloc(1, fbn, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     s_prev = (uint8_t *)heap_caps_calloc(1, fbn, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     s_rle = (uint8_t *)heap_caps_calloc(1, fbn, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!s_fb_mem || !s_prev || !s_rle) { ESP_LOGE(TAG, "no memory for the frame buffers"); return false; }
+    if (!s_fb_mem || !s_prev || !s_rle) { ESP_LOGE(TAG, "no memory for the frame buffers"); heap_caps_free(s_fb_mem); heap_caps_free(s_prev); heap_caps_free(s_rle); s_fb_mem = nullptr; s_prev = nullptr; s_rle = nullptr; return false; }  // K85FIX1
     for (int y = 0; y < h; y++) s_lines[y] = s_fb_mem + (size_t)y * w * 2;
     s_nw = w; s_nh = h;
 
@@ -318,6 +318,7 @@ static void send_resp(int fd, const char *status, const char *ctype, const void 
     int n = snprintf(h, sizeof(h), "HTTP/1.1 %s\r\nContent-Type: %s\r\n", status, ctype);
     if (!no_body) n += snprintf(h + n, sizeof(h) - n, "Content-Length: %u\r\n", (unsigned)len);
     n += snprintf(h + n, sizeof(h) - n, "Cache-Control: no-store\r\nConnection: %s\r\n%s\r\n", s_keep ? "keep-alive" : "close", extra ? extra : "");
+    if (n > (int)sizeof(h) - 1) n = (int)sizeof(h) - 1;  // K85FIX4: a long "extra" header was truncated, n then pointed past the buffer
     send_all(fd, h, (size_t)n);
     if (len && !no_body) send_all(fd, body, len);
 }
@@ -802,7 +803,7 @@ static void h_audio(int fd, const char *q, const char *req, int hdr_end) {
     if (s < 0) { s = total + s; if (s < 0) s = 0; }          // "bytes=-N" = the last N bytes
     if (s >= total) { send_err(fd, "416 Range Not Satisfiable", "range"); return; }
     const long slice = wav ? 160 * 1024 : 64 * 1024;          // short pieces: the screen stream keeps running between them
-    if (e < 0 || e >= total) e = total - 1;
+    if (e < 0 || e >= total || e < s) e = total - 1;  // K85FIX4: "bytes=100-50" gave a negative length
     if (e - s + 1 > slice) e = s + slice - 1;
     long n = e - s + 1;
 

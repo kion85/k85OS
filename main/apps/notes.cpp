@@ -40,6 +40,7 @@ static void notes_free(void) {
 static void notes_load(void) {
     notes_free();
     FILE *f = fopen(NOTES_FILE, "rb");
+    if (!f) { char k85_tmp[96]; snprintf(k85_tmp, sizeof(k85_tmp), "%s.tmp", NOTES_FILE); f = fopen(k85_tmp, "rb"); }  // K85FIX4: recover after power loss between remove() and rename()
     if (!f) return;
     fseek(f, 0, SEEK_END);
     long sz = ftell(f);

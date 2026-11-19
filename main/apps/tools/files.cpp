@@ -149,10 +149,9 @@ static void write_file_edit(const char *full_path, const char *name) {
         wait_ab_exit();
         return;
     }
-    fwrite(edited, 1, strlen(edited), fw);
-    fclose(fw);
-
-    k85_show_message("Saved!\nA+B=back");
+    size_t k85_want = strlen(edited); bool k85_wok = (fwrite(edited, 1, k85_want, fw) == k85_want);  // K85FIX2
+    if (fclose(fw) != 0) k85_wok = false;
+    k85_show_message(k85_wok ? "Saved!\nA+B=back" : "Write failed\nDisk full?\nA+B=back");
     wait_ab_exit();
 }
 
