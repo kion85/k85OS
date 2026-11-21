@@ -8,6 +8,7 @@
 #include "power_menu.h"
 #include "core/fonts.h"
 #include "sound.h"
+#include "lang.h" // K85SYSLANG1
 #include "input.h"
 #include "device.h"
 #include "step_counter.h"
@@ -39,13 +40,13 @@
 #include <cstring>
 #include <cmath>
 
-#define K85_SETTINGS_ITEM_COUNT 25
+#define K85_SETTINGS_ITEM_COUNT 26
 #define K85_SETTINGS_BACK_IDX   (K85_SETTINGS_ITEM_COUNT - 1)
 
 static const char *k85_settings_labels[K85_SETTINGS_ITEM_COUNT] = {
     "Theme", "Brightness", "Battery mode", "Boot style",
     "Device name", "Sound volume", "WiFi", "Reset steps",
-    "Check for updates", "Screen lock", "Status bar", "BG gradient", "Lock screen", "Menu UI style", "CPU freq", "Power", "Font", "Keyboard nav", "Cursor", "Desktop", "Look", "Voice pack", "Backup", "USB drive", "Back",
+    "Check for updates", "Screen lock", "Status bar", "BG gradient", "Lock screen", "Menu UI style", "CPU freq", "Power", "Font", "Keyboard nav", "Cursor", "Desktop", "Look", "Voice pack", "Backup", "USB drive", "System language", "Back",
 };
 
 static int s_selected = 0;
@@ -111,6 +112,7 @@ static void settings_value_str(char *out, size_t out_size, int idx) {
         case 23: out[0] = 0; break; // USB drive
         case 22: out[0] = 0; break; // Backup (submenu)
         case 21: snprintf(out, out_size, "%s", g_config.voice_dl_block ? "blocked" : (g_config.voice_auto_dl ? "auto" : "manual")); break; // Voice pack
+        case 24: snprintf(out, out_size, "%s", k85_lang_ru() ? "Russian" : "English"); break; // System language
         default: out[0] = 0;
     }
 }
@@ -440,6 +442,14 @@ static void settings_voice_menu(void) {
     }
 }
 
+// K85SYSLANG1: Settings -> System language (the same switch as the shell "lang" command and the web page)
+static void settings_language_menu(void) {
+    const char *items[3] = { "English", "Russian", "Back" };
+    int sel = k85_run_list_menu("System language", items, 3, nullptr);
+    if (sel == 0) k85_lang_set(false);
+    else if (sel == 1) k85_lang_set(true);
+}
+
 static void settings_apply_item(int idx) {
     switch (idx) {
         case 0:
@@ -618,6 +628,7 @@ static void settings_apply_item(int idx) {
             break;
         case 23: k85_run_usb_drive(); break; // USB drive
         case 22: k85_run_backup_menu(); break; // Backup
+        case 24: settings_language_menu(); break; // System language
         case 21:
             settings_voice_menu();
             break;

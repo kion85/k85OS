@@ -215,6 +215,52 @@ static bool ks_save(const KsEntry &e, const char *dir, char *dest, size_t dn) {
     return k85_apprepo_download_file(e.url, dest);
 }
 
+// K85SEC9: a downloaded .lua script runs without a warning only when its Ed25519 signature verifies
+// (<name>.lua.sig next to it in the repository, same key as the firmware, 128 hex characters).
+#include "ota_verify.h"
+#include <sys/stat.h>
+#include "esp_heap_caps.h"
+enum { KS_SIG_NONE = 0, KS_SIG_OK = 1, KS_SIG_BAD = 2 };
+static int ks_check_script_sig(KsEntry *ents, int n, const KsEntry &e, const char *dest) {
+    char signame[64];
+    snprintf(signame, sizeof(signame), "%.58s.sig", e.name);
+    const char *sig_url = nullptr;
+    for (int i = 0; i < n; i++) {
+        if (!ents[i].dir && !strcmp(ents[i].name, signame)) { sig_url = ents[i].url; break; }
+    }
+    if (!sig_url) return KS_SIG_NONE;
+    char spath[230];
+    snprintf(spath, sizeof(spath), "%s.sig", dest);
+    if (k85_is_blocked_path(spath)) return KS_SIG_BAD;
+    int res = KS_SIG_BAD;
+    if (k85_apprepo_download_file(sig_url, spath)) {
+        char hex[200] = "";
+        FILE *sf = fopen(spath, "rb");
+        if (sf) {
+            const size_t r = fread(hex, 1, sizeof(hex) - 1, sf);
+            hex[r] = 0;
+            fclose(sf);
+        }
+        size_t hl = strlen(hex);
+        while (hl && (hex[hl - 1] == '\n' || hex[hl - 1] == '\r' || hex[hl - 1] == ' ')) hex[--hl] = 0;
+        struct stat st;
+        if (hl == 128 && stat(dest, &st) == 0 && st.st_size > 0 && st.st_size <= 131072) {
+            const size_t sz = (size_t)st.st_size;
+            uint8_t *buf = (uint8_t *)heap_caps_malloc(sz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if (!buf) buf = (uint8_t *)malloc(sz);
+            if (buf) {
+                FILE *f = fopen(dest, "rb");
+                const size_t rd = f ? fread(buf, 1, sz, f) : 0;
+                if (f) fclose(f);
+                if (rd == sz && k85_ota_verify_signature_hex(buf, sz, hex)) res = KS_SIG_OK;
+                free(buf);
+            }
+        }
+    }
+    remove(spath);
+    return res;
+}
+
 static void ks_handle_file(KsEntry *ents, int n, int idx) {
     KsEntry &e = ents[idx];
     const char *x = ks_ext(e.name);
@@ -234,8 +280,10 @@ static void ks_handle_file(KsEntry *ents, int n, int idx) {
         const char *yn[] = { "Run now", "Later" };
         if (k85_run_list_menu("Game saved", yn, 2, nullptr) == 0) k85_json_run_file(dest);
     } else if (!strcasecmp(x, ".lua")) {
-        const char *yn2[] = { "Run now", "Later" };
-        if (k85_run_list_menu("Script saved", yn2, 2, nullptr) == 0) {
+        const int k85_sg = ks_check_script_sig(ents, n, e, dest);   // K85SEC9
+        if (k85_sg == KS_SIG_BAD) { remove(dest); ks_msg_wait("Bad signature!\nScript removed\nA+B=back"); return; }
+        const char *yn2[] = { k85_sg == KS_SIG_OK ? "Run now (signed)" : "Keep, do not run", k85_sg == KS_SIG_OK ? "Later" : "Run UNSIGNED" };
+        if (k85_run_list_menu(k85_sg == KS_SIG_OK ? "Script saved (signed)" : "Script UNSIGNED", yn2, 2, nullptr) == (k85_sg == KS_SIG_OK ? 0 : 1)) {
             static EXT_RAM_BSS_ATTR char jout[1024];
             bool jok = k85_js_run_file(dest, jout, sizeof(jout), true);
             char jm[260];

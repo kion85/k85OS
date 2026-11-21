@@ -10,6 +10,7 @@
 #include "games/pong.h"
 #include "games/memory_match.h"
 #include "games/dash.h"
+#include "games/drone.h"
 #include "../net/app_repo.h"
 #include "../net/firmware_flash.h"
 #include "../net/wifi.h"
@@ -24,10 +25,10 @@
 
 #include <cstring>
 
-#define K85_GAMES_ITEM_COUNT 11
+#define K85_GAMES_ITEM_COUNT 12
 
 static const char *k85_games_labels[K85_GAMES_ITEM_COUNT] = {
-    "Snake", "Tetris", "2048", "Race", "Reaction", "Flappy", "Pong", "Memory", "Dash", "Download", "Back",
+    "Snake", "Tetris", "2048", "Race", "Reaction", "Flappy", "Pong", "Memory", "Dash", "Drone", "Download", "Back",
 };
 
 // Иконки для главного меню Games.
@@ -86,6 +87,16 @@ static void draw_games_icon(int cx, int cy, int r, const char *name, uint32_t co
         d.drawFastVLine(cx - r + 1, cy - r/2, r, col);
         d.drawFastVLine(cx + r - 1, cy - r/2, r, col);
         d.fillCircle(cx, cy, 2, col);
+    } else if (!strcmp(name, "Drone")) {
+        d.fillRect(cx - r / 4, cy - r / 6, r / 2, r / 3, col);
+        d.drawLine(cx - r / 4, cy - r / 6, cx - r, cy - r / 2, col);
+        d.drawLine(cx + r / 4, cy - r / 6, cx + r, cy - r / 2, col);
+        d.drawLine(cx - r / 4, cy + r / 6, cx - r, cy + r / 2, col);
+        d.drawLine(cx + r / 4, cy + r / 6, cx + r, cy + r / 2, col);
+        d.drawCircle(cx - r, cy - r / 2, r / 4 + 1, col);
+        d.drawCircle(cx + r, cy - r / 2, r / 4 + 1, col);
+        d.drawCircle(cx - r, cy + r / 2, r / 4 + 1, col);
+        d.drawCircle(cx + r, cy + r / 2, r / 4 + 1, col);
     } else if (!strcmp(name, "Download")) {
         d.drawLine(cx, cy - r, cx, cy + r/3, col);
         d.fillTriangle(cx - r/3, cy, cx + r/3, cy, cx, cy + r/2, col);
@@ -160,7 +171,8 @@ void k85_run_games_menu(void) {
             case 6: k85_run_pong(); break;
             case 7: k85_run_memory_match(); break;
             case 8: k85_run_dash(); break;
-            case 9: run_download_menu(); break;
+            case 9: k85_run_drone(); break;
+            case 10: run_download_menu(); break;
             default: break;
         }
     }

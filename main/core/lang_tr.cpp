@@ -9,6 +9,8 @@
 
 struct Ph { const char *en; const char *ru; };
 static const Ph k_ph[] = {
+    /* K85SYSLANG1 */ {"System language","Язык системы"}, {"Russian","Русский"}, {"English","Английский"},
+    /* K85CLIP1 */ {"Clipboard","Буфер обмена"}, {"Clear clipboard","Очистить буфер"}, {"Copied","Скопировано"}, {"Pasted","Вставлено"}, {"Cut to clip","Вырезано"}, {"Clip empty","Буфер пуст"}, {"Empty text","Текст пуст"}, {"No room","Нет места"},
     /* K85NOTES2: Notes app */ {"Notes","Заметки"}, {"+ New note","+ Новая заметка"}, {"New note","Новая заметка"}, {"Edit note","Правка заметки"}, {"View note","Просмотр заметки"}, {"Delete note","Удалить заметку"}, {"Back to list","Назад к списку"}, {"Keep it","Оставить"}, {"Yes, delete","Да, удалить"}, {"Notes full","Список полон"}, {"No memory","Нет памяти"}, {"Empty: not saved","Пусто: не сохранено"}, {"Save failed","Ошибка сохранения"}, {"(empty)","(пусто)"},
     /* hints */
     {"A+B (hold) = exit","A+B (удерж.) = выход"}, {"A+B hold to unlock","A+B удерж. = разблок."}, {"A+B=back","A+B=назад"},

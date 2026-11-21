@@ -94,6 +94,7 @@ struct K85FbPanel : public lgfx::Panel_FrameBufferBase {
 
 static bool s_active = false;
 static bool s_started = false;
+static bool s_pw_override = false;   // K85WPA3: A+B at power-on opens the AP for this boot even when a password is set
 static uint8_t *s_fb_mem = nullptr;     // what the UI draws into
 static uint8_t *s_prev = nullptr;       // what the browser has (last frame sent)
 static uint8_t *s_rle = nullptr;
@@ -173,6 +174,7 @@ bool k85_headless_pre(void) {
         mode = 2;
         k85_svc_set_str("headless", "on");
         ESP_LOGW(TAG, "A+B held at boot: headless forced ON");
+        s_pw_override = true;   // K85WPA3
     }
     bool go = (mode == 2);
     if (mode == 1) go = auto_detect_dead();
@@ -317,7 +319,7 @@ static void send_resp(int fd, const char *status, const char *ctype, const void 
     bool no_body = (status[0] == '2' && status[1] == '0' && status[2] == '4');
     int n = snprintf(h, sizeof(h), "HTTP/1.1 %s\r\nContent-Type: %s\r\n", status, ctype);
     if (!no_body) n += snprintf(h + n, sizeof(h) - n, "Content-Length: %u\r\n", (unsigned)len);
-    n += snprintf(h + n, sizeof(h) - n, "Cache-Control: no-store\r\nConnection: %s\r\n%s\r\n", s_keep ? "keep-alive" : "close", extra ? extra : "");
+    n += snprintf(h + n, sizeof(h) - n, "Cache-Control: no-store\r\nConnection: %s\r\nX-J: %d\r\n%s\r\n", s_keep ? "keep-alive" : "close", k85_joy_wanted() ? 1 : 0, extra ? extra : "");
     if (n > (int)sizeof(h) - 1) n = (int)sizeof(h) - 1;  // K85FIX4: a long "extra" header was truncated, n then pointed past the buffer
     send_all(fd, h, (size_t)n);
     if (len && !no_body) send_all(fd, body, len);
@@ -357,9 +359,17 @@ static void url_decode(const char *s, char *o, size_t n) {
     o[i] = 0;
 }
 
+// K85SEC8: constant-time string compare (session token / login nonce)
+static bool hl_ct_eq(const char *a, const char *b) {
+    const size_t la = strlen(a), lb = strlen(b);
+    unsigned char d = (unsigned char)(la != lb);
+    for (size_t i = 0; i < lb; i++) d |= (unsigned char)((unsigned char)a[i < la ? i : 0] ^ (unsigned char)b[i]);
+    return lb > 0 && d == 0;
+}
+
 static bool authed(const char *q, int64_t now) {
     char t[24];
-    if (!s_sess || !qparam(q, "t", t, sizeof(t)) || strcmp(t, s_tok) != 0) return false;
+    if (!s_sess || !qparam(q, "t", t, sizeof(t)) || !hl_ct_eq(t, s_tok)) return false;  // K85SEC8
     s_sess_last = now;
     return true;
 }
@@ -394,21 +404,31 @@ canvas{position:fixed;left:0;top:0;width:100vw;height:100vh;object-fit:contain;i
 #m{position:fixed;left:0;right:0;top:40%;text-align:center;color:#9cf;font:16px monospace;padding:0 16px}
 #t{position:fixed;left:0;right:0;bottom:8px;text-align:center;color:#8899aa;font:12px monospace;pointer-events:none}
 #g{position:fixed;right:6px;top:6px;width:30px;height:30px;line-height:30px;text-align:center;border-radius:15px;background:#223;color:#9cf;opacity:.35;font-size:18px;display:none}
-#p{display:none;position:fixed;right:6px;top:42px;width:170px;background:rgba(16,16,24,.92);border:1px solid #446;border-radius:8px;padding:6px}
+#p{display:none;position:fixed;right:6px;top:42px;width:176px;box-sizing:border-box;max-height:calc(100vh - 52px);max-height:calc(100dvh - 52px);overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;touch-action:pan-y;z-index:30;background:rgba(16,16,24,.92);border:1px solid #446;border-radius:8px;padding:6px}/*K85PNL1*/
+@media (max-height:520px){#p button{margin:3px 0;padding:5px;font-size:13px}#p .r button{padding:5px 0}#rm{font-size:10px}}
 #p button{display:block;width:100%;margin:4px 0;padding:8px;background:#1c2038;color:#fff;border:1px solid #66a;border-radius:6px;font:14px monospace}
 #p .r{display:flex;gap:4px;font:12px monospace;color:#889;align-items:center}
 #p .r button{margin:0;padding:6px 0}
 #rm{font:11px monospace;color:#889;white-space:pre-line;margin-top:4px}
-#mu{display:none;position:fixed;left:0;right:0;bottom:0;max-height:60vh;overflow:auto;background:rgba(16,16,24,.96);border-top:1px solid #446;color:#ccd;font:14px monospace}
+#mu{display:none;z-index:30;position:fixed;left:0;right:0;bottom:0;max-height:60vh;overflow:auto;background:rgba(16,16,24,.96);border-top:1px solid #446;color:#ccd;font:14px monospace}
 #mh{display:flex;justify-content:space-between;padding:8px 12px;color:#9cf;border-bottom:1px solid #334}
 #mx{padding:0 8px}
 #ml div{padding:11px 12px;border-bottom:1px solid #223}
 #au{width:100%;display:block}
+#jy{display:none;position:fixed;left:0;right:0;bottom:0;height:200px;pointer-events:none;z-index:5}
+#jy>div{pointer-events:auto;position:absolute;-webkit-user-select:none;user-select:none;touch-action:none}
+#js{left:3vw;bottom:14px;width:150px;height:150px;border-radius:75px;background:rgba(80,120,255,.18);border:2px solid rgba(150,190,255,.5)}
+#jk{position:absolute;left:45px;top:45px;width:60px;height:60px;border-radius:30px;background:rgba(150,190,255,.6);pointer-events:none}
+#ja{left:3vw;bottom:14px;width:150px;height:150px;display:none}
+#ja b{position:absolute;width:48px;height:48px;line-height:48px;text-align:center;border-radius:10px;background:rgba(80,120,255,.3);border:1px solid #8af;color:#cde;font-size:22px;touch-action:none}
+#jb{right:4vw;bottom:34px;width:96px;height:96px;line-height:96px;text-align:center;border-radius:48px;background:rgba(255,160,40,.35);border:2px solid #fa4;color:#fd8;font:bold 16px monospace}
+#jm{left:3vw;bottom:172px;width:36px;height:28px;line-height:28px;text-align:center;border-radius:6px;background:rgba(80,120,255,.3);color:#cde;font-size:16px}
 </style></head><body>
 <div id="m">подключение...</div>
 <canvas id="c" width="240" height="135"></canvas>
 <div id="t"></div>
 <div id="g">&#9881;</div>
+<div id="jy"><div id="js"><div id="jk"></div></div><div id="ja"><b data-d="u" style="left:51px;top:0">&#9650;</b><b data-d="d" style="left:51px;top:102px">&#9660;</b><b data-d="l" style="left:0;top:51px">&#9664;</b><b data-d="r" style="left:102px;top:51px">&#9654;</b></div><div id="jb">BOOST</div><div id="jm">&#8646;</div></div>
 <div id="mu"><div id="mh"><span id="md"></span><b id="mx">&#10005;</b></div><div id="ml"></div><audio id="au" controls preload="none"></audio></div>
 <div id="p">
 <button id="bu">Загрузить файл</button><input type="file" id="fi" style="display:none">
@@ -417,6 +437,7 @@ canvas{position:fixed;left:0;top:0;width:100vw;height:100vh;object-fit:contain;i
 <button id="bb">BIOS</button>
 <button id="br">Reboot</button>
 <button id="bf">Полный экран</button>
+<button id="bw">Пароль Wi-Fi</button>
 <button id="bc">Цвета</button>
 <div id="rm"></div>
 <div class="r">режим<button data-m="on">on</button><button data-m="off">off</button></div>
@@ -472,7 +493,8 @@ async function loop(){
    var buf=null;
    if(r.status===200)buf=await r.arrayBuffer();
    clearTimeout(tm);
-   if(r.status===401){T=null;cv.style.display='none';gg.style.display='none';pp.style.display='none';auth();return}
+   if(r.headers.get('X-J')!==null)setJoy(r.headers.get('X-J')==='1');
+    if(r.status===401){setJoy(false);T=null;cv.style.display='none';gg.style.display='none';pp.style.display='none';auth();return}
    if(buf){
     var h=function(n){return +r.headers.get(n)};
     V=h('X-V');
@@ -521,6 +543,7 @@ function lsdir(d){
 }
 document.getElementById('bm').onclick=function(){if(!T)return;pp.style.display='none';mu.style.display='block';lsdir(MD)};
 document.getElementById('mx').onclick=function(){mu.style.display='none'};
+document.getElementById('bw').onclick=function(){if(!T)return;var p=prompt('Пароль точки Wi-Fi (8-63 символа, WPA2/WPA3). Пусто = убрать пароль. Применится после перезагрузки стика. Если сеть сейчас открыта, пароль один раз уйдёт по ней открытым текстом.','');if(p===null)return;if(p&&(p.length<8||p.length>63)){tip('нужно 8-63 символа',4000);return}api('/api/ap?p='+encodeURIComponent(p),function(r){r.json().then(function(j){pp.style.display='none';tip(j.s==='ok'?(p?'пароль задан, действует после перезагрузки':'пароль убран, сеть будет открытой после перезагрузки'):'ошибка: '+(j.s||''),6000)})})};
 var rm=document.getElementById('rm');
 function memq(){if(T&&pp.style.display==='block')api('/api/mem',function(r){r.json().then(function(j){rm.textContent='RAM int '+j.i+'K big '+j.l+'K min '+j.m+'K\nPSRAM '+j.p+'K'})})}
 setInterval(memq,3000);
@@ -554,6 +577,28 @@ cv.addEventListener('wheel',function(e){
  pend+=(e.deltaY>0?1:-1);
  var n=Date.now();if(n-lastSend>40){lastSend=n;sendScroll()}else setTimeout(sendScroll,45);
 },{passive:false});[].forEach.call(document.querySelectorAll('[data-l]'),function(b){b.onclick=function(){var l=b.getAttribute('data-l');api('/api/lang?l='+l,function(){tip('язык: '+l,3000)})}});
+var JX=0,JY=0,JB=0,JM=localStorage.k85j==='1',jon=false,jlast=0;
+function setJoy(on){if(on===jon)return;jon=on;document.getElementById('jy').style.display=on?'block':'none';if(on)tip('Дрон: стик внизу, шестерёнка слева сверху = меню',5000)}
+function joySend(f){var n=Date.now();if(!f&&n-jlast<55)return;jlast=n;if(T)api('/api/joy?x='+Math.round(JX)+'&y='+Math.round(JY)+'&b='+JB)}
+var js=document.getElementById('js'),jk=document.getElementById('jk'),sp=null;
+function stickMove(e){var r=js.getBoundingClientRect(),R=r.width/2,dx=e.clientX-(r.left+R),dy=e.clientY-(r.top+R),l=Math.sqrt(dx*dx+dy*dy);if(l>R){dx=dx*R/l;dy=dy*R/l}jk.style.left=(R-30+dx)+'px';jk.style.top=(R-30+dy)+'px';JX=dx/R*100;JY=dy/R*100;joySend(0)}
+js.addEventListener('pointerdown',function(e){sp=e.pointerId;try{js.setPointerCapture(sp)}catch(_){}stickMove(e)});
+js.addEventListener('pointermove',function(e){if(e.pointerId===sp)stickMove(e)});
+function stickEnd(e){if(e.pointerId!==sp)return;sp=null;JX=0;JY=0;jk.style.left='45px';jk.style.top='45px';joySend(1)}
+js.addEventListener('pointerup',stickEnd);js.addEventListener('pointercancel',stickEnd);
+var AR={u:0,d:0,l:0,r:0};
+function arrCalc(){JX=(AR.r-AR.l)*100;JY=(AR.d-AR.u)*100;joySend(1)}
+[].forEach.call(document.querySelectorAll('#ja b'),function(b){var k=b.getAttribute('data-d');
+ b.addEventListener('pointerdown',function(e){AR[k]=1;try{b.setPointerCapture(e.pointerId)}catch(_){}arrCalc()});
+ var up=function(){AR[k]=0;arrCalc()};b.addEventListener('pointerup',up);b.addEventListener('pointercancel',up)});
+var jbEl=document.getElementById('jb');
+jbEl.addEventListener('pointerdown',function(e){JB=1;try{jbEl.setPointerCapture(e.pointerId)}catch(_){}joySend(1)});
+var jbUp=function(){JB=0;joySend(1)};
+jbEl.addEventListener('pointerup',jbUp);jbEl.addEventListener('pointercancel',jbUp);
+function jmode(){document.getElementById('js').style.display=JM?'none':'block';document.getElementById('ja').style.display=JM?'block':'none'}
+document.getElementById('jm').onclick=function(){JM=!JM;localStorage.k85j=JM?'1':'0';JX=0;JY=0;joySend(1);jmode()};
+setInterval(function(){if(jon&&T&&(JX||JY||JB))joySend(1)},70);
+jmode();
 </script></body></html>)HTML";
 
 static void h_auth(int fd, const char *q, int64_t now) {
@@ -564,7 +609,7 @@ static void h_auth(int fd, const char *q, int64_t now) {
     }
     char out[96];
     if (s_sess) {
-        if (!strcmp(n, s_sess_nonce)) {
+        if (hl_ct_eq(n, s_sess_nonce)) {
             s_sess_last = now;
             snprintf(out, sizeof(out), "{\"s\":\"ok\",\"t\":\"%s\"}", s_tok);
             send_json(fd, out);
@@ -573,7 +618,7 @@ static void h_auth(int fd, const char *q, int64_t now) {
         }
         return;
     }
-    if (s_pend && strcmp(n, s_pend_nonce) != 0) { send_json(fd, "{\"s\":\"busy\"}"); return; }
+    if (s_pend && !hl_ct_eq(n, s_pend_nonce)) { send_json(fd, "{\"s\":\"busy\"}"); return; }
     if (!s_pend) {
         snprintf(s_pend_nonce, sizeof(s_pend_nonce), "%s", n);
         s_pend = true; s_pend_since = now; s_both_since = 0;
@@ -874,6 +919,10 @@ static bool handle(int fd) {
         h_ls(fd, q);
     } else if (!strcmp(full, "/api/audio")) {
         h_audio(fd, q, req, hdr_end);
+    } else if (!strcmp(full, "/api/joy")) {
+        char jx[8], jy[8], jb[4];
+        if (qparam(q, "x", jx, sizeof(jx)) && qparam(q, "y", jy, sizeof(jy)) && qparam(q, "b", jb, sizeof(jb))) k85_joy_post(atoi(jx), atoi(jy), atoi(jb));
+        send_json(fd, "{\"s\":\"ok\"}");
     } else if (!strcmp(full, "/api/scroll")) {
         char ns[8];
         if (qparam(q, "n", ns, sizeof(ns))) k85_scroll_post(atoi(ns));
@@ -908,6 +957,22 @@ static bool handle(int fd) {
         } else {
             send_err(fd, "400 Bad Request", "bad mode");
         }
+    } else if (!strcmp(full, "/api/ap")) {   // K85WPA3
+        char apw[200], apd[72];
+        if (!qparam(q, "p", apw, sizeof(apw))) apw[0] = 0;
+        url_decode(apw, apd, sizeof(apd));
+        const size_t apn = strlen(apd);
+        bool apok = (apn == 0) || (apn >= 8 && apn <= 63);
+        for (size_t i = 0; apok && i < apn; i++) {
+            const unsigned char ch = (unsigned char)apd[i];
+            if (ch < 0x20 || ch > 0x7E) apok = false;
+        }
+        if (apok) {
+            k85_svc_set_str("hl_pass", apn ? apd : nullptr);
+            send_json(fd, "{\"s\":\"ok\"}");
+        } else {
+            send_err(fd, "400 Bad Request", "bad password");
+        }
     } else if (!strcmp(full, "/api/reboot")) {
         s_keep = false;
         send_json(fd, "{\"s\":\"ok\"}");
@@ -922,6 +987,17 @@ static bool handle(int fd) {
 }
 
 // ---------------- AP + watchdog ----------------
+// K85WPA3: the AP password (set with "headless pass" or from the web page) lives in k85_svc.cfg, which is closed to the shell and FTP.
+// A+B at power-on opens the AP for that boot. true = the AP is protected (WPA2/WPA3 mixed mode).
+static bool hl_ap_pass(char *out, size_t n) {
+    out[0] = 0;
+    if (s_pw_override) return false;
+    if (!k85_svc_get_str("hl_pass", out, n)) { out[0] = 0; return false; }
+    const size_t l = strlen(out);
+    if (l < 8 || l > 63) { out[0] = 0; return false; }
+    return true;
+}
+
 static void ap_config_apply(void) {
     if (!s_ap_netif) s_ap_netif = esp_netif_create_default_wifi_ap();
     uint8_t mac[6];
@@ -933,7 +1009,16 @@ static void ap_config_apply(void) {
     wifi_config_t ap = {};
     snprintf((char *)ap.ap.ssid, sizeof(ap.ap.ssid), "%s", ssid);
     ap.ap.ssid_len = (uint8_t)strlen(ssid);
-    ap.ap.authmode = WIFI_AUTH_OPEN;
+    char k85_pw[66];
+    if (hl_ap_pass(k85_pw, sizeof(k85_pw))) {   // K85WPA3
+        snprintf((char *)ap.ap.password, sizeof(ap.ap.password), "%s", k85_pw);
+        ap.ap.authmode = WIFI_AUTH_WPA2_WPA3_PSK;
+        ap.ap.pmf_cfg.capable = true;
+        ap.ap.pmf_cfg.required = false;
+        ap.ap.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
+    } else {
+        ap.ap.authmode = WIFI_AUTH_OPEN;
+    }
     ap.ap.max_connection = 3;
     ap.ap.channel = (uint8_t)channel;
     esp_wifi_set_mode(WIFI_MODE_APSTA);
@@ -1061,11 +1146,30 @@ void k85_headless_start(void) {
     s_started = true;
     uint8_t mac[6];
     esp_wifi_get_mac(WIFI_IF_AP, mac);
-    ESP_LOGI(TAG, "web UI: WiFi k85OS-%02X%02X (open), http://192.168.4.1 or http://k85os.local", mac[4], mac[5]);
+    { char k85_pwx[66]; ESP_LOGI(TAG, "web UI: WiFi k85OS-%02X%02X (%s), http://192.168.4.1 or http://k85os.local", mac[4], mac[5], hl_ap_pass(k85_pwx, sizeof(k85_pwx)) ? "WPA2/WPA3" : "open"); }
 }
 
 void k85_headless_cmd(const char *arg, char *out, size_t out_size) {
     while (*arg == ' ') arg++;
+    if (!strncmp(arg, "pass", 4) && (arg[4] == ' ' || arg[4] == 0)) {   // K85WPA3
+        const char *pw = arg + 4;
+        while (*pw == ' ') pw++;
+        char cur[66];
+        if (!*pw) {
+            snprintf(out, out_size, "AP password: %s\r\nusage: headless pass <8-63 chars> | headless pass off\r\n", hl_ap_pass(cur, sizeof(cur)) ? "set (WPA2/WPA3)" : "none (open AP)");
+            return;
+        }
+        if (!strcmp(pw, "off")) {
+            k85_svc_set_str("hl_pass", nullptr);
+            snprintf(out, out_size, "AP password removed (open AP after reboot)\r\n");
+            return;
+        }
+        const size_t pn = strlen(pw);
+        if (pn < 8 || pn > 63) { snprintf(out, out_size, "headless pass: 8..63 characters\r\n"); return; }
+        k85_svc_set_str("hl_pass", pw);
+        snprintf(out, out_size, "AP password set: WPA2/WPA3 after reboot\r\n");
+        return;
+    }
     if (!strcmp(arg, "on") || !strcmp(arg, "off")) k85_svc_set_str("headless", arg);
     int m = hl_mode();
     snprintf(out, out_size, "headless: %s, mode %s (changes apply after reboot)\r\nusage: headless on|off\r\n",

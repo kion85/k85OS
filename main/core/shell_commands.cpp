@@ -79,6 +79,7 @@ static void cmd_ls(const char *arg, char *out, size_t out_size) {
     while ((ent = readdir(d)) != nullptr && used < out_size - 64) {
         char full[256];
         snprintf(full, sizeof(full), "%s/%s", path, ent->d_name);
+        if (is_blocked_path(full)) continue;  // K85SEC6: do not list protected files
         struct stat st;
         bool is_dir = (stat(full, &st) == 0 && S_ISDIR(st.st_mode));
         int w = snprintf(out + used, out_size - used, "%s%s\r\n", ent->d_name, is_dir ? "/" : "");

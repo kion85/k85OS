@@ -68,6 +68,27 @@ int k85_scroll_take(void) {
     return v;
 }
 
+// K85DRONE1: virtual stick from the web page
+static volatile int s_jx = 0, s_jy = 0, s_jb = 0;
+static volatile int64_t s_jt = 0;
+static volatile bool s_jwant = false;
+void k85_joy_post(int x, int y, int boost) {
+    if (x > 100) x = 100;
+    if (x < -100) x = -100;
+    if (y > 100) y = 100;
+    if (y < -100) y = -100;
+    s_jx = x; s_jy = y; s_jb = boost ? 1 : 0;
+    s_jt = esp_timer_get_time();
+}
+bool k85_joy_get(int *x, int *y, int *boost) {
+    int64_t t = s_jt;
+    if (!t || esp_timer_get_time() - t > 500000) return false;
+    *x = s_jx; *y = s_jy; *boost = s_jb;
+    return true;
+}
+void k85_joy_want(bool on) { s_jwant = on; }
+bool k85_joy_wanted(void) { return s_jwant; }
+
 // K85PT3: age of a pending gesture
 bool k85_pointer_age(int64_t *a) { int64_t t = s_pt; if (!t) return false; *a = esp_timer_get_time() - t; return true; }
 bool k85_scroll_age(int64_t *a) { int64_t t = s_sct; if (!t || s_sc == 0) return false; *a = esp_timer_get_time() - t; return true; }

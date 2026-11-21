@@ -1,3 +1,7 @@
+#include <cstdio>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "M5Unified.h"
 #include "lock_screen.h"
 #include "lock_fx.h"
 #include "voice.h" // K85V:inc
@@ -373,7 +377,21 @@ void k85_lock_screen_loop(void) {
                 char entered[32] = "";
                 bool submitted = k85_text_input("Enter password:", "", entered, sizeof(entered));
 
-                if (submitted && k85_lock_verify_password(entered, g_config.lock_password)) {
+                static int k85_lock_fails = 0;   // K85SEC7: growing delay after wrong passwords (a correct one or a reboot resets it)
+                const bool k85_pw_ok = submitted && k85_lock_verify_password(entered, g_config.lock_password);
+                if (submitted && !k85_pw_ok) {
+                    k85_lock_fails++;
+                    int k85_w = k85_lock_fails * 2;
+                    if (k85_w > 30) k85_w = 30;
+                    M5.Display.fillScreen(0x000000);
+                    M5.Display.setTextSize(2);
+                    M5.Display.setTextColor(0xFF4444, 0x000000);
+                    M5.Display.setCursor(8, M5.Display.height() / 2 - 16);
+                    M5.Display.printf("Wrong password\nwait %d s", k85_w);
+                    vTaskDelay(pdMS_TO_TICKS(k85_w * 1000));
+                }
+                if (k85_pw_ok) {
+                    k85_lock_fails = 0;
                     s_particles_init = false;
                     k85_lockfx_end();
                     k85_wake_screen();

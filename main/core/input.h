@@ -28,3 +28,8 @@ int k85_scroll_take(void);
 // K85PT3: age of a gesture that nobody has taken yet (false = nothing pending)
 bool k85_pointer_age(int64_t *age_us);
 bool k85_scroll_age(int64_t *age_us);
+// K85DRONE1: virtual stick from the web page: x/y -100..100 (+y = down), boost 0/1. get() is true while the page keeps sending (< 0.5 s)
+void k85_joy_post(int x, int y, int boost);
+bool k85_joy_get(int *x, int *y, int *boost);
+void k85_joy_want(bool on);     // a game that wants the stick on the web page
+bool k85_joy_wanted(void);

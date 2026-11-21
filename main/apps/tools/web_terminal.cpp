@@ -369,7 +369,10 @@ s_session[0] = 0;
         ap_config.ap.ssid_len = strlen(ssid);
         if (!ap_open) {
             snprintf((char *)ap_config.ap.password, sizeof(ap_config.ap.password), "%s", ap_pass);
-            ap_config.ap.authmode = WIFI_AUTH_WPA2_PSK;
+            ap_config.ap.authmode = WIFI_AUTH_WPA2_WPA3_PSK;  // K85SEC8: mixed WPA2/WPA3
+        ap_config.ap.pmf_cfg.capable = true;
+        ap_config.ap.pmf_cfg.required = false;
+        ap_config.ap.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
         } else {
             ap_config.ap.authmode = WIFI_AUTH_OPEN;
         }

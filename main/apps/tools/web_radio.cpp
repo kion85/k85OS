@@ -580,7 +580,12 @@ static void handle_connection(int conn_fd) {
         get_param(query, "host", host, sizeof(host));
         get_param(query, "port", port_str, sizeof(port_str));
         int port = atoi(port_str);
-        if (port <= 0) port = 8073;
+        if (port <= 0 || port > 65535) port = 8073;  // K85SEC8
+        for (char *hp = host; *hp; hp++) {   // host name characters only: no CR/LF or spaces in the handshake
+            const unsigned char hc = (unsigned char)*hp;
+            const bool hok = (hc >= '0' && hc <= '9') || ((hc | 32) >= 'a' && (hc | 32) <= 'z') || hc == '.' || hc == '-' || hc == ':';
+            if (!hok) { host[0] = 0; break; }
+        }
         if (host[0]) {
             snprintf(s_want_host, sizeof(s_want_host), "%s", host);
             s_want_port = port;
@@ -686,7 +691,10 @@ void k85_run_web_radio(void) {
         ap_config.ap.ssid_len = strlen(ssid);
         if (!ap_open) {
             snprintf((char *)ap_config.ap.password, sizeof(ap_config.ap.password), "%s", ap_pass);
-            ap_config.ap.authmode = WIFI_AUTH_WPA2_PSK;
+            ap_config.ap.authmode = WIFI_AUTH_WPA2_WPA3_PSK;  // K85SEC8: mixed WPA2/WPA3
+        ap_config.ap.pmf_cfg.capable = true;
+        ap_config.ap.pmf_cfg.required = false;
+        ap_config.ap.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
         } else {
             ap_config.ap.authmode = WIFI_AUTH_OPEN;
         }

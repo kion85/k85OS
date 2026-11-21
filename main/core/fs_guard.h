@@ -1,18 +1,9 @@
 #pragma once
-
+// K85SEC6: files that must never be readable / writable / deletable through the shell, FTP, the web file manager,
+// Lua, the messenger or KStore: SSH keys, the config and every variant of it (.bak .tmp .new .prev), its backups
+// and the services file. One shared list; the match is case-insensitive and works on any part of the path.
 #include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
 
-// Files that must never be readable/writable/deletable through shell
-// commands or FTP: SSH host key, main config (WiFi passwords, hashes) and
-// the services file (FTP login hash).
-static inline bool k85_is_blocked_path(const char *path) {
-    static const char *const blocked[] = {
-        "k85_ssh_host_key", "k85os_config.json", "k85_ssh_", "k85_svc",
-    };
-    for (size_t i = 0; i < sizeof(blocked) / sizeof(blocked[0]); i++) {
-        if (strstr(path, blocked[i])) return true;
-    }
-    return false;
-}
+bool k85_is_blocked_path(const char *path);
