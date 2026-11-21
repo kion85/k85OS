@@ -1,4 +1,4 @@
-﻿build/
+build/
 managed_components/
 .vscode/
 sdkconfig.old
@@ -35,3 +35,19 @@ voice.pak
 audit_report.txt
 
 *.*bak
+
+# local clutter (K85CLEAN1)
+_scratch/
+*.log
+boot_log.txt
+bug_*.txt
+*_scan_full.txt
+build_log.txt*
+bootloader_report.txt
+voice_dump.txt
+patch_*.ps1
+add_linux_menu.ps1
+bugscan.ps1
+sdkconfig.bak*
+sdkconfig.logsoff
+sdkconfig.sizebak
