@@ -1,4 +1,5 @@
 #include "json_interpreter.h"
+#include "json_view.h"
 #include "esp_attr.h"
 #include "config.h"
 #include "esp_timer.h"
@@ -1785,6 +1786,15 @@ static void run_game_from_json(char *json_buf, const char *base) {
     hooks.free_fn = free;
     cJSON_InitHooks(&hooks);              // big games: the whole tree lives in PSRAM
     cJSON *root = cJSON_Parse(json_buf);
+    if (!root) {   // K85JV1: a lenient JSON (comments, trailing commas, quotes) is normalized and parsed again
+        char *k85_norm = nullptr;
+        size_t k85_nn = 0;
+        if (k85_json_normalize(json_buf, strlen(json_buf), &k85_norm, &k85_nn)) {
+            root = cJSON_Parse(k85_norm);
+            free(k85_norm);
+            if (!root) (void)cJSON_Parse(json_buf);   // the error position must point into json_buf again
+        }
+    }
     const char *ep = cJSON_GetErrorPtr();
     cJSON_InitHooks(nullptr);
     if (!root) {
@@ -1811,7 +1821,8 @@ static void run_game_from_json(char *json_buf, const char *base) {
                (!tp[0] && (sg_jhas(root, "scenes") || sg_jhas(root, "on_tick") || sg_jhas(root, "draw")))) {
         run_script_game(root, base);
     } else {
-        run_quest_game(root);
+        if (cJSON_IsObject(root) && cJSON_IsString(cJSON_GetObjectItem(root, "start")) && cJSON_IsObject(cJSON_GetObjectItem(root, "screens"))) run_quest_game(root);
+        else k85_json_view_buffer(json_buf, strlen(json_buf), base);   // K85JV1: any other JSON is shown as data
     }
     cJSON_Delete(root);
 }

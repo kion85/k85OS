@@ -17,6 +17,8 @@
 #include "log.h"
 #include "config.h"
 #include "fonts.h"
+#include "fs_guard.h"
+#include <sys/stat.h>
 #include "M5Unified.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
@@ -322,7 +324,7 @@ static bool url_resolve(const char *base, const char *ref, char *out, size_t sz)
     if (!r[0]) return false;
 
     static char tmp[BR_URL_MAX * 2];
-    if (starts_ci(r, "http://") || starts_ci(r, "https://")) {
+    if (starts_ci(r, "http://") || starts_ci(r, "https://") || (starts_ci(r, "file://") && starts_ci(base, "file://"))) {  // K85JV1
         snprintf(tmp, sizeof(tmp), "%s", r);
     } else {
         const char *c = r;
@@ -1013,7 +1015,45 @@ static void host_line(const char *url, char *out, size_t sz) {
 }
 
 // Returns a new page or nullptr (err filled with a short reason).
+// K85JV1: a local file as a page (file:///littlefs/x.html or file:///sd/x.html)
+static Page *fetch_local(const char *url, char *err, size_t errsz) {
+    draw_status("Opening file...", "");
+    static char path[BR_URL_MAX];
+    const char *p = url + 7;
+    const size_t pl = strcspn(p, "?#");
+    if (pl == 0 || pl >= sizeof(path)) { snprintf(err, errsz, "Bad path"); return nullptr; }
+    size_t o = 0;
+    for (size_t i = 0; i < pl && o + 1 < sizeof(path); i++) {
+        if (p[i] == '%' && i + 2 < pl && hexv(p[i + 1]) >= 0 && hexv(p[i + 2]) >= 0) { path[o++] = (char)(hexv(p[i + 1]) * 16 + hexv(p[i + 2])); i += 2; }
+        else path[o++] = p[i];
+    }
+    path[o] = 0;
+    if (strstr(path, "..") || (strncmp(path, "/littlefs/", 10) != 0 && strncmp(path, "/sd/", 4) != 0) || k85_is_blocked_path(path)) {
+        snprintf(err, errsz, "Not allowed");
+        return nullptr;
+    }
+    struct stat st;
+    if (stat(path, &st) != 0 || S_ISDIR(st.st_mode)) { snprintf(err, errsz, "No such file"); return nullptr; }
+    char *buf = (char *)br_alloc(BR_RAW_MAX + 1);
+    if (!buf) { snprintf(err, errsz, "Out of memory"); return nullptr; }
+    FILE *f = fopen(path, "rb");
+    if (!f) { free(buf); snprintf(err, errsz, "Cannot open"); return nullptr; }
+    const size_t n = fread(buf, 1, BR_RAW_MAX, f);
+    fclose(f);
+    buf[n] = 0;
+    const char *dot = strrchr(path, '.');
+    const bool html = dot && (!strcasecmp(dot, ".html") || !strcasecmp(dot, ".htm") || !strcasecmp(dot, ".xhtml"));
+    Page *pg = page_build(url, buf, n, html ? "text/html" : "text/plain; charset=utf-8", s_cols);
+    free(buf);
+    if (!pg) { snprintf(err, errsz, "Out of memory"); return nullptr; }
+    if ((size_t)st.st_size > n) pg->trunc = true;
+    snprintf(pg->host, sizeof(pg->host), "local");
+    return pg;
+}
+
+// Returns a new page or nullptr (err filled with a short reason).
 static Page *fetch_page(const char *url, char *err, size_t errsz) {
+    if (starts_ci(url, "file://")) return fetch_local(url, err, errsz);  // K85JV1
     char l2[28]; host_line(url, l2, sizeof(l2));
     draw_status("Loading...", l2);
     static char fin[BR_URL_MAX];
@@ -1249,6 +1289,7 @@ static void keep_alive_input(void) { k85_wake_screen(); }
 
 static void make_url(const char *in, char *out, size_t sz) {
     while (*in == ' ') in++;
+    if (in[0] == '/') { snprintf(out, sz, "file://%s", in); return; }  // K85JV1: a local path
     if (strstr(in, "://")) { snprintf(out, sz, "%s", in); return; }
     if (strchr(in, ' ') || !strchr(in, '.')) {
         char enc[160]; url_encode(in, enc, sizeof(enc));
@@ -1417,6 +1458,20 @@ static void browse(const char *start_url) {
         vTaskDelay(pdMS_TO_TICKS(25));
     }
     page_free(pg);
+}
+
+// K85JV1: open a URL or a file:// page directly (used by the file manager)
+void k85_browser_open_url(const char *url) {
+    auto &d = M5.Display;
+    d.setFont(&fonts::Font0);
+    d.setTextSize(1);
+    s_cols = (d.width() - 4) / 6;
+    s_rows = (d.height() - 2 * BR_LH - 2) / BR_LH;
+    if (s_rows < 4) s_rows = 4;
+    static char u[BR_URL_MAX * 2 + 100];
+    snprintf(u, sizeof(u), "%s", url);
+    browse(u);
+    k85_apply_font(g_config.font_idx);
 }
 
 void k85_run_browser(void) {

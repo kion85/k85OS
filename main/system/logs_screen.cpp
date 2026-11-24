@@ -1,4 +1,4 @@
-﻿#include "logs_screen.h"
+#include "logs_screen.h"
 #include "theme.h"
 #include "power.h"
 #include "input.h"
@@ -48,7 +48,7 @@ void k85_run_logs_screen(void) {
             k85_wait_ab_release();
             return;
         }
-        if (k85_btn_a_pressed()) {
+        { const int k85_bk = k85_a_hold_back(2); if (k85_bk > 0) { const int k85_c = k85_log_count() > 0 ? k85_log_count() : 1; offset = ((offset - k85_bk * 8) % k85_c + k85_c) % k85_c; render(offset); } } /*B2:logs*/ if (k85_btn_a_pressed()) {
             k85_wake_screen();
             int count = k85_log_count();
             offset = (offset + 8) % (count > 0 ? count : 1);

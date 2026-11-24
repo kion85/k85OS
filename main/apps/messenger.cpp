@@ -656,7 +656,7 @@ void k85_run_messenger(void) {
         int iExit = n;   snprintf(labels[n], sizeof(labels[0]), "Exit"); items[n] = labels[n]; n++;
         if (sel >= n) sel = n - 1;
 
-        if (k85_btn_a_pressed()) { sel = (sel + 1) % n; s_dirty = true; }
+        { const int k85_bk = k85_a_hold_back(2); if (k85_bk > 0) { sel = ((sel - k85_bk) % n + n) % n; s_dirty = true; } } /*B2:msg*/ if (k85_btn_a_pressed()) { sel = (sel + 1) % n; s_dirty = true; }
         if (k85_btn_b_pressed()) {
             s_dirty = true;
             if (sel == 0) chat(true, BCAST, "Everyone");

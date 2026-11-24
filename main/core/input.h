@@ -19,6 +19,9 @@ bool k85_ab_held(uint32_t ms);
 
 // Аналог wait_ab_release(): блокирует, пока обе кнопки не отпустят
 void k85_wait_ab_release(void);
+// K85BACK1: hold A = step back in a list. Returns how many steps to go back right now (0 = nothing).
+// first_steps: how far the first step of a hold goes back: 2 when the screen already moved forward on the press, 1 when it moves forward on the release.
+int k85_a_hold_back(int first_steps);
 // K85PT1: a tap from the web page (screen coordinates). take() returns true once, only if the tap is fresh (< 0.6 s)
 void k85_pointer_post(int x, int y);
 bool k85_pointer_take(int *x, int *y);
@@ -33,3 +36,8 @@ void k85_joy_post(int x, int y, int boost);
 bool k85_joy_get(int *x, int *y, int *boost);
 void k85_joy_want(bool on);     // a game that wants the stick on the web page
 bool k85_joy_wanted(void);
+// K85PAD1: virtual A / B held from the web page (a, b = 0 / 1); get() is true while the page keeps sending (< 0.5 s)
+void k85_pad_post(int a, int b);
+bool k85_pad_get(int *a, int *b);
+void k85_pad_want(bool on);     // a game that wants the A / B pad on the web page
+bool k85_pad_wanted(void);

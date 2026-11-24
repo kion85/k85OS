@@ -764,6 +764,11 @@ void k85_run_settings_menu(void) {
             s_selected = (s_selected + 1) % K85_SETTINGS_ITEM_COUNT;
             settings_draw();
         }
+        const int k85_bk = k85_a_hold_back(2);   // K85BACK1: hold A = step back
+        if (k85_bk > 0) {
+            s_selected = ((s_selected - k85_bk) % K85_SETTINGS_ITEM_COUNT + K85_SETTINGS_ITEM_COUNT) % K85_SETTINGS_ITEM_COUNT;
+            settings_draw();
+        }
 
         if (k85_btn_b_pressed()) {
             if (s_selected == K85_SETTINGS_BACK_IDX) {

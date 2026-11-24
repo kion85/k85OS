@@ -1,4 +1,4 @@
-﻿#include "status_bar_settings.h"
+#include "status_bar_settings.h"
 #include "common.h"
 #include "theme.h"
 #include "input.h"
@@ -308,7 +308,7 @@ void k85_run_status_bar_settings(void) {
             k85_config_save();
             return;
         }
-        if (k85_btn_a_pressed()) {
+        { const int k85_bk = k85_a_hold_back(2); if (k85_bk > 0) { s_selected = ((s_selected - k85_bk) % K85_SB_ITEM_COUNT + K85_SB_ITEM_COUNT) % K85_SB_ITEM_COUNT; draw(); } } /*B2:sb*/ if (k85_btn_a_pressed()) {
             s_selected = (s_selected + 1) % K85_SB_ITEM_COUNT;
             draw();
         }

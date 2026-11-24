@@ -186,7 +186,7 @@ void k85_quick_settings_open(void) {
             return;
         }
 
-        if (k85_btn_a_pressed()) {
+        { const int k85_bk = k85_a_hold_back(2); if (k85_bk > 0) { s_qs_selected = ((s_qs_selected - k85_bk) % K85_QS_ITEM_COUNT + K85_QS_ITEM_COUNT) % K85_QS_ITEM_COUNT; qs_voice_item(s_qs_selected); qs_draw(); } } /*B2:qs*/ if (k85_btn_a_pressed()) {
             s_qs_selected = (s_qs_selected + 1) % K85_QS_ITEM_COUNT;
             qs_voice_item(s_qs_selected);
             qs_draw();

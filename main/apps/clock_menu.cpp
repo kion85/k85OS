@@ -136,7 +136,7 @@ static int input_number_field(const char *label, int initial, int max_val) {
         M5.Display.print("A=+1  B=OK  A+B=cancel");
 
         if (k85_ab_held(500)) { k85_wait_ab_release(); return -1; }
-        if (k85_btn_a_pressed()) { val = (val + 1) % (max_val + 1); }
+        { const int k85_bk = k85_a_hold_back(2); if (k85_bk > 0) val = ((val - k85_bk) % (max_val + 1) + (max_val + 1)) % (max_val + 1); } /*B2:num*/ if (k85_btn_a_pressed()) { val = (val + 1) % (max_val + 1); }
         if (k85_btn_b_pressed()) { return val; }
         vTaskDelay(pdMS_TO_TICKS(30));
     }
@@ -272,7 +272,7 @@ static void run_time_settings(void) {
         M5.Display.print("A=next B=select A+B=back");
 
         if (k85_ab_held(500)) { k85_wait_ab_release(); return; }
-        if (k85_btn_a_pressed()) { selected = (selected + 1) % 4; }
+        { const int k85_bk = k85_a_hold_back(2); if (k85_bk > 0) selected = ((selected - k85_bk) % 4 + 4) % 4; } /*B2:clock*/ if (k85_btn_a_pressed()) { selected = (selected + 1) % 4; }
         if (k85_btn_b_pressed()) {
             if (selected == 3) return;
             if (selected == 0) {

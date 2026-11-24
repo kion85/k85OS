@@ -391,7 +391,7 @@ static void run_customization_menu(void) {
     while (true) {
         k85_input_update();
         if (k85_ab_held(500)) { k85_wait_ab_release(); return; }
-        if (k85_btn_a_pressed()) {
+        { const int k85_bk = k85_a_hold_back(2); if (k85_bk > 0) { selected = ((selected - k85_bk) % CUST_COUNT + CUST_COUNT) % CUST_COUNT; k85_voice_say(labeled[selected]); draw(); } } /*B2:cust*/ if (k85_btn_a_pressed()) {
             selected = (selected + 1) % CUST_COUNT;
             k85_voice_say(labeled[selected]);
             draw();
@@ -938,7 +938,7 @@ void k85_run_bios_menu(void) {
             continue;
         }
 
-        if (k85_btn_a_pressed()) {
+        { const int k85_bk = k85_a_hold_back(2); if (k85_bk > 0) { s_selected = ((s_selected - k85_bk) % K85_BIOS_ITEM_COUNT + K85_BIOS_ITEM_COUNT) % K85_BIOS_ITEM_COUNT; k85_voice_say(k85_bios_labels[s_selected]); bios_draw(); } } /*B2:bios*/ if (k85_btn_a_pressed()) {
             s_selected = (s_selected + 1) % K85_BIOS_ITEM_COUNT;
             k85_voice_say(k85_bios_labels[s_selected]); // K85V:bios
             bios_draw();

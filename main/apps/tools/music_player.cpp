@@ -377,7 +377,7 @@ static void play_wav_file(const char *path) {
 
         bool need_redraw = false;
 
-        if (k85_btn_a_pressed()) {
+        { const int k85_bk = k85_a_hold_back(2); if (k85_bk > 0) { selected = ((selected - k85_bk) % CTRL_COUNT + CTRL_COUNT) % CTRL_COUNT; need_redraw = true; } } /*B2:mp*/ if (k85_btn_a_pressed()) {
             selected = (selected + 1) % CTRL_COUNT;
             need_redraw = true;
         }
@@ -611,7 +611,7 @@ static void play_mp3_file(const char *path) {
 
         bool need_redraw = false;
 
-        if (k85_btn_a_pressed()) {
+        { const int k85_bk = k85_a_hold_back(2); if (k85_bk > 0) { selected = ((selected - k85_bk) % CTRL_COUNT + CTRL_COUNT) % CTRL_COUNT; need_redraw = true; } } /*B2:mp*/ if (k85_btn_a_pressed()) {
             selected = (selected + 1) % CTRL_COUNT;
             need_redraw = true;
         }

@@ -27,6 +27,12 @@
 
 #define K85_GAMES_ITEM_COUNT 12
 
+// K85PAD1: while a game runs, the web page shows the A / B pad (B left, A right) or touch zones
+struct K85PadWant {
+    K85PadWant() { k85_pad_want(true); }
+    ~K85PadWant() { k85_pad_want(false); }
+};
+
 static const char *k85_games_labels[K85_GAMES_ITEM_COUNT] = {
     "Snake", "Tetris", "2048", "Race", "Reaction", "Flappy", "Pong", "Memory", "Dash", "Drone", "Download", "Back",
 };
@@ -162,15 +168,15 @@ void k85_run_games_menu(void) {
         int idx = k85_run_list_menu("GAMES", k85_games_labels, K85_GAMES_ITEM_COUNT, nullptr, draw_games_icon);
         if (idx < 0 || idx == K85_GAMES_ITEM_COUNT - 1) return;
         switch (idx) {
-            case 0: k85_run_snake(); break;
-            case 1: k85_run_tetris(); break;
-            case 2: k85_run_2048(); break;
-            case 3: k85_run_race(); break;
-            case 4: k85_run_reaction(); break;
-            case 5: k85_run_flappy(); break;
-            case 6: k85_run_pong(); break;
-            case 7: k85_run_memory_match(); break;
-            case 8: k85_run_dash(); break;
+            case 0: { K85PadWant k85_pw; k85_run_snake(); } break;
+            case 1: { K85PadWant k85_pw; k85_run_tetris(); } break;
+            case 2: { K85PadWant k85_pw; k85_run_2048(); } break;
+            case 3: { K85PadWant k85_pw; k85_run_race(); } break;
+            case 4: { K85PadWant k85_pw; k85_run_reaction(); } break;
+            case 5: { K85PadWant k85_pw; k85_run_flappy(); } break;
+            case 6: { K85PadWant k85_pw; k85_run_pong(); } break;
+            case 7: { K85PadWant k85_pw; k85_run_memory_match(); } break;
+            case 8: { K85PadWant k85_pw; k85_run_dash(); } break;
             case 9: k85_run_drone(); break;
             case 10: run_download_menu(); break;
             default: break;

@@ -40,7 +40,7 @@ static const char *TAG = "k85_hl";
 
 // 0 = off, 1 = auto (blank display id = no display), 2 = always.
 // Used when /littlefs/k85_svc.cfg has no "headless" key. Set to 1 after the screen is repaired.
-#define K85_HEADLESS_DEFAULT 0
+#define K85_HEADLESS_DEFAULT 0   // K85HLTOG1: 0 = off (a screen that answers must never end up in web mode), 1 = auto, 2 = always on
 
 #define HL_GPIO_A 11     /* StickS3 buttons, active low (same pins as in the bootloader hook) */
 #define HL_GPIO_B 12
@@ -163,22 +163,39 @@ static bool auto_detect_dead(void) {
         M5.Display.endWrite();
     }
     bool blank = (id == 0 || id == 0xFFFFFF);
-    ESP_LOGI(TAG, "display id probe: 0x%06x%s", (unsigned)id, blank ? " (blank)" : "");
+    ESP_LOGW(TAG, "display id probe: 0x%06x%s", (unsigned)id, blank ? " (blank)" : "");
     if (!blank) { k85_svc_set_bool("disp_ok", true); return false; }
     return true;   // a blank id = nothing answers = no display
 }
 
 bool k85_headless_pre(void) {
     int mode = hl_mode();
+    // K85HLTOG1: hold A+B at power-on for 3 s = switch the web mode on / off. Two rising beeps = ON, two falling beeps = OFF.
+    // The choice is saved. Switching ON also opens the AP for this boot (an escape when the AP password is forgotten).
     if (gpio_get_level((gpio_num_t)HL_GPIO_A) == 0 && gpio_get_level((gpio_num_t)HL_GPIO_B) == 0) {
-        mode = 2;
-        k85_svc_set_str("headless", "on");
-        ESP_LOGW(TAG, "A+B held at boot: headless forced ON");
-        s_pw_override = true;   // K85WPA3
+        bool held = true;
+        for (int i = 0; i < 60 && held; i++) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+            if (gpio_get_level((gpio_num_t)HL_GPIO_A) != 0 || gpio_get_level((gpio_num_t)HL_GPIO_B) != 0) held = false;
+        }
+        if (held) {
+            const bool was_on = (mode == 2) || (mode == 1 && auto_detect_dead());
+            const bool turn_on = !was_on;
+            mode = turn_on ? 2 : 0;
+            k85_svc_set_str("headless", turn_on ? "on" : "off");
+            s_pw_override = turn_on;
+            if (!g_config.sound_muted) {
+                M5.Speaker.tone(turn_on ? 1000.0f : 800.0f, 110);
+                vTaskDelay(pdMS_TO_TICKS(150));
+                M5.Speaker.tone(turn_on ? 1800.0f : 400.0f, 160);
+                vTaskDelay(pdMS_TO_TICKS(200));
+            }
+            ESP_LOGW(TAG, "A+B held at boot: web mode %s", turn_on ? "ON" : "OFF");
+        }
     }
     bool go = (mode == 2);
     if (mode == 1) go = auto_detect_dead();
-    ESP_LOGI(TAG, "headless mode=%d -> %s", mode, go ? "ACTIVE" : "off");
+    ESP_LOGW(TAG, "headless mode=%d -> %s", mode, go ? "ACTIVE" : "off");  // K85HLLOG1
     if (!go) return false;
 
     int rot = (int)M5.Display.getRotation();
@@ -259,7 +276,19 @@ static void pin_set(int idx, bool on) {
     }
 }
 static void btn_pulse(int idx, int ms, int64_t now) { pin_set(idx, true); s_btn_end[idx] = now + (int64_t)ms * 1000; }
+static bool s_pad_on[2] = { false, false };   // K85PAD1: A / B held from the web page
 static void gesture_tick(int64_t now) {
+    {   // K85PAD1: the page holds a virtual button -> drive the pin until it lets go (or goes silent)
+        int pa = 0, pb = 0;
+        const bool fresh = k85_pad_get(&pa, &pb);
+        const bool want[2] = { fresh && pa != 0, fresh && pb != 0 };
+        for (int i = 0; i < 2; i++) {
+            if (want[i] == s_pad_on[i]) continue;
+            s_pad_on[i] = want[i];
+            if (want[i]) pin_set(i, true);
+            else if (!s_btn_end[i]) pin_set(i, false);
+        }
+    }
     for (int i = 0; i < 2; i++) {
         if (s_btn_end[i] && now >= s_btn_end[i]) { pin_set(i, false); s_btn_end[i] = 0; }
     }
@@ -319,7 +348,7 @@ static void send_resp(int fd, const char *status, const char *ctype, const void 
     bool no_body = (status[0] == '2' && status[1] == '0' && status[2] == '4');
     int n = snprintf(h, sizeof(h), "HTTP/1.1 %s\r\nContent-Type: %s\r\n", status, ctype);
     if (!no_body) n += snprintf(h + n, sizeof(h) - n, "Content-Length: %u\r\n", (unsigned)len);
-    n += snprintf(h + n, sizeof(h) - n, "Cache-Control: no-store\r\nConnection: %s\r\nX-J: %d\r\n%s\r\n", s_keep ? "keep-alive" : "close", k85_joy_wanted() ? 1 : 0, extra ? extra : "");
+    n += snprintf(h + n, sizeof(h) - n, "Cache-Control: no-store\r\nConnection: %s\r\nX-J: %d\r\nX-P: %d\r\n%s\r\n", s_keep ? "keep-alive" : "close", k85_joy_wanted() ? 1 : 0, k85_pad_wanted() ? 1 : 0, extra ? extra : "");
     if (n > (int)sizeof(h) - 1) n = (int)sizeof(h) - 1;  // K85FIX4: a long "extra" header was truncated, n then pointed past the buffer
     send_all(fd, h, (size_t)n);
     if (len && !no_body) send_all(fd, body, len);
@@ -415,6 +444,16 @@ canvas{position:fixed;left:0;top:0;width:100vw;height:100vh;object-fit:contain;i
 #mx{padding:0 8px}
 #ml div{padding:11px 12px;border-bottom:1px solid #223}
 #au{width:100%;display:block}
+#g{z-index:8}
+#pd{display:none;position:fixed;left:0;right:0;top:0;bottom:0;pointer-events:none;z-index:4}
+#pd>div{pointer-events:auto;position:absolute;top:50%;margin-top:-55px;width:92px;height:110px;line-height:110px;text-align:center;border-radius:22px;background:rgba(80,120,255,.22);border:2px solid rgba(150,190,255,.55);color:#cde;font:bold 32px monospace;-webkit-user-select:none;user-select:none;touch-action:none}
+#pdB{left:2vw}
+#pdA{right:2vw}
+#pz{display:none;position:fixed;left:0;right:0;top:44px;bottom:0;z-index:4;touch-action:none}
+#pz>div{position:absolute;top:0;bottom:0;width:50%;box-sizing:border-box;padding-top:28vh;text-align:center;color:rgba(200,220,255,.3);font:bold 44px monospace;-webkit-user-select:none;user-select:none;touch-action:none}
+#pzB{left:0}
+#pzA{right:0}
+#pd>div.on,#pz>div.on{background:rgba(120,180,255,.42);color:#fff}
 #jy{display:none;position:fixed;left:0;right:0;bottom:0;height:200px;pointer-events:none;z-index:5}
 #jy>div{pointer-events:auto;position:absolute;-webkit-user-select:none;user-select:none;touch-action:none}
 #js{left:3vw;bottom:14px;width:150px;height:150px;border-radius:75px;background:rgba(80,120,255,.18);border:2px solid rgba(150,190,255,.5)}
@@ -429,6 +468,8 @@ canvas{position:fixed;left:0;top:0;width:100vw;height:100vh;object-fit:contain;i
 <div id="t"></div>
 <div id="g">&#9881;</div>
 <div id="jy"><div id="js"><div id="jk"></div></div><div id="ja"><b data-d="u" style="left:51px;top:0">&#9650;</b><b data-d="d" style="left:51px;top:102px">&#9660;</b><b data-d="l" style="left:0;top:51px">&#9664;</b><b data-d="r" style="left:102px;top:51px">&#9654;</b></div><div id="jb">BOOST</div><div id="jm">&#8646;</div></div>
+<div id="pd"><div id="pdB">B</div><div id="pdA">A</div></div>
+<div id="pz"><div id="pzB">B</div><div id="pzA">A</div></div>
 <div id="mu"><div id="mh"><span id="md"></span><b id="mx">&#10005;</b></div><div id="ml"></div><audio id="au" controls preload="none"></audio></div>
 <div id="p">
 <button id="bu">Загрузить файл</button><input type="file" id="fi" style="display:none">
@@ -442,6 +483,7 @@ canvas{position:fixed;left:0;top:0;width:100vw;height:100vh;object-fit:contain;i
 <div id="rm"></div>
 <div class="r">режим<button data-m="on">on</button><button data-m="off">off</button></div>
 <div class="r">язык<button data-l="ru">RU</button><button data-l="en">EN</button></div>
+<div class="r">кнопки<button data-pm="btn">A/B</button><button data-pm="zone">зоны</button><button data-pm="off">выкл</button></div>
 </div>
 <script>
 var N=localStorage.k85n;
@@ -494,7 +536,8 @@ async function loop(){
    if(r.status===200)buf=await r.arrayBuffer();
    clearTimeout(tm);
    if(r.headers.get('X-J')!==null)setJoy(r.headers.get('X-J')==='1');
-    if(r.status===401){setJoy(false);T=null;cv.style.display='none';gg.style.display='none';pp.style.display='none';auth();return}
+    if(r.headers.get('X-P')!==null){padWant=r.headers.get('X-P')==='1';padSet(padWant&&PM!=='off')}
+    if(r.status===401){padSet(false);setJoy(false);T=null;cv.style.display='none';gg.style.display='none';pp.style.display='none';auth();return}
    if(buf){
     var h=function(n){return +r.headers.get(n)};
     V=h('X-V');
@@ -551,7 +594,7 @@ gg.addEventListener('click',memq);
 var d0=null;
 cv.addEventListener('pointerdown',function(e){d0={x:e.clientX,y:e.clientY}});
 cv.addEventListener('pointerup',function(e){
- if(!T||!d0)return;
+ if(!T||!d0||padOn)return;
  if(Math.abs(e.clientX-d0.x)>12||Math.abs(e.clientY-d0.y)>12){d0=null;return}
  d0=null;
  var r=cv.getBoundingClientRect(),s=Math.min(r.width/cv.width,r.height/cv.height),ox=(r.width-cv.width*s)/2,oy=(r.height-cv.height*s)/2;
@@ -564,7 +607,7 @@ var dr=null,acc=0,lastSend=0,pend=0;
 function sendScroll(){if(pend!==0&&T){var n=pend;pend=0;api('/api/scroll?n='+n)}}
 cv.addEventListener('pointerdown',function(e){dr={y:e.clientY};acc=0;try{cv.setPointerCapture(e.pointerId)}catch(_){}});
 cv.addEventListener('pointermove',function(e){
- if(!dr||!T)return;
+ if(!dr||!T||padOn)return;
  var r=cv.getBoundingClientRect(),s=Math.min(r.width/cv.width,r.height/cv.height);
  acc+=(dr.y-e.clientY)/s;dr.y=e.clientY;
  var st=Math.trunc(acc/10);
@@ -573,7 +616,7 @@ cv.addEventListener('pointermove',function(e){
 cv.addEventListener('pointerup',function(){dr=null;sendScroll()});
 cv.addEventListener('pointercancel',function(){dr=null;sendScroll()});
 cv.addEventListener('wheel',function(e){
- e.preventDefault();if(!T)return;
+ e.preventDefault();if(!T||padOn)return;
  pend+=(e.deltaY>0?1:-1);
  var n=Date.now();if(n-lastSend>40){lastSend=n;sendScroll()}else setTimeout(sendScroll,45);
 },{passive:false});[].forEach.call(document.querySelectorAll('[data-l]'),function(b){b.onclick=function(){var l=b.getAttribute('data-l');api('/api/lang?l='+l,function(){tip('язык: '+l,3000)})}});
@@ -599,6 +642,28 @@ function jmode(){document.getElementById('js').style.display=JM?'none':'block';d
 document.getElementById('jm').onclick=function(){JM=!JM;localStorage.k85j=JM?'1':'0';JX=0;JY=0;joySend(1);jmode()};
 setInterval(function(){if(jon&&T&&(JX||JY||JB))joySend(1)},70);
 jmode();
+var PM=localStorage.k85pad||'btn',padOn=false,padWant=false,PS={a:0,b:0},padLast=0;
+var pdE=document.getElementById('pd'),pzE=document.getElementById('pz');
+function padSend(f){var n=Date.now();if(!f&&n-padLast<90)return;padLast=n;if(T)api('/api/pad?a='+PS.a+'&b='+PS.b)}
+function padSet(on){
+ if(on===padOn)return;
+ padOn=on;
+ pdE.style.display=(on&&PM==='btn')?'block':'none';
+ pzE.style.display=(on&&PM==='zone')?'block':'none';
+ if(!on){PS.a=0;PS.b=0}
+ else if(PM==='zone')tip('игра: левая половина = B, правая = A',3500);
+}
+function padBind(id,k){
+ var el=document.getElementById(id),n=0;
+ el.addEventListener('pointerdown',function(e){n++;PS[k]=1;el.classList.add('on');try{el.setPointerCapture(e.pointerId)}catch(_){}padSend(1);e.preventDefault()});
+ var up=function(){if(n>0)n--;if(n===0){PS[k]=0;el.classList.remove('on')}padSend(1)};
+ el.addEventListener('pointerup',up);el.addEventListener('pointercancel',up);
+}
+padBind('pdB','b');padBind('pdA','a');padBind('pzB','b');padBind('pzA','a');
+setInterval(function(){if(padOn&&T&&(PS.a||PS.b))padSend(1)},120);
+function padMark(){[].forEach.call(document.querySelectorAll('[data-pm]'),function(b){b.style.borderColor=(b.getAttribute('data-pm')===PM)?'#fa4':'#66a'})}
+[].forEach.call(document.querySelectorAll('[data-pm]'),function(b){b.onclick=function(){PM=b.getAttribute('data-pm');localStorage.k85pad=PM;padSet(false);padSet(padWant&&PM!=='off');padMark();tip(PM==='btn'?'кнопки A/B по бокам во время игр':(PM==='zone'?'зоны: левая половина = B, правая = A':'кнопки игр выключены'),3500)}});
+padMark();
 </script></body></html>)HTML";
 
 static void h_auth(int fd, const char *q, int64_t now) {
@@ -919,6 +984,10 @@ static bool handle(int fd) {
         h_ls(fd, q);
     } else if (!strcmp(full, "/api/audio")) {
         h_audio(fd, q, req, hdr_end);
+    } else if (!strcmp(full, "/api/pad")) {   // K85PAD1
+        char pa[4], pb[4];
+        if (qparam(q, "a", pa, sizeof(pa)) && qparam(q, "b", pb, sizeof(pb))) k85_pad_post(atoi(pa), atoi(pb));
+        send_json(fd, "{\"s\":\"ok\"}");
     } else if (!strcmp(full, "/api/joy")) {
         char jx[8], jy[8], jb[4];
         if (qparam(q, "x", jx, sizeof(jx)) && qparam(q, "y", jy, sizeof(jy)) && qparam(q, "b", jb, sizeof(jb))) k85_joy_post(atoi(jx), atoi(jy), atoi(jb));
@@ -1131,7 +1200,7 @@ void k85_headless_start(void) {
     k85_wifi_init();
     unsigned fi = (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024);
     unsigned lb = (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024);
-    ESP_LOGI(TAG, "internal RAM: free %u KB, largest block %u KB", fi, lb);
+    ESP_LOGW(TAG, "internal RAM: free %u KB, largest block %u KB", fi, lb);
     if (fi < 8 || lb < 3) { ESP_LOGE(TAG, "not enough internal RAM for the AP"); return; }
 
     ap_config_apply();
@@ -1146,7 +1215,7 @@ void k85_headless_start(void) {
     s_started = true;
     uint8_t mac[6];
     esp_wifi_get_mac(WIFI_IF_AP, mac);
-    { char k85_pwx[66]; ESP_LOGI(TAG, "web UI: WiFi k85OS-%02X%02X (%s), http://192.168.4.1 or http://k85os.local", mac[4], mac[5], hl_ap_pass(k85_pwx, sizeof(k85_pwx)) ? "WPA2/WPA3" : "open"); }
+    { char k85_pwx[66]; ESP_LOGW(TAG, "web UI: WiFi k85OS-%02X%02X (%s), http://192.168.4.1 or http://k85os.local", mac[4], mac[5], hl_ap_pass(k85_pwx, sizeof(k85_pwx)) ? "WPA2/WPA3" : "open"); }
 }
 
 void k85_headless_cmd(const char *arg, char *out, size_t out_size) {
@@ -1170,7 +1239,7 @@ void k85_headless_cmd(const char *arg, char *out, size_t out_size) {
         snprintf(out, out_size, "AP password set: WPA2/WPA3 after reboot\r\n");
         return;
     }
-    if (!strcmp(arg, "on") || !strcmp(arg, "off")) k85_svc_set_str("headless", arg);
+    if (!strcmp(arg, "on") || !strcmp(arg, "off") || !strcmp(arg, "auto")) k85_svc_set_str("headless", arg);
     int m = hl_mode();
     snprintf(out, out_size, "headless: %s, mode %s (changes apply after reboot)\r\nusage: headless on|off\r\n",
              s_active ? "ACTIVE" : "inactive", m == 0 ? "off" : "on");

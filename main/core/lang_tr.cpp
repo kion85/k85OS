@@ -9,6 +9,7 @@
 
 struct Ph { const char *en; const char *ru; };
 static const Ph k_ph[] = {
+    /* K85JV1 */ {"Open/Run","Открыть/Запуск"}, {"Find text","Найти текст"}, {"Find next","Найти далее"}, {"Copy value","Копировать значение"}, {"Copy path","Копировать путь"}, {"Expand all","Развернуть всё"}, {"Collapse all","Свернуть всё"}, {"Go to top","В начало"}, {"Jump +20","Вперёд +20"}, {"Jump -20","Назад -20"}, {"Save formatted","Сохранить красиво"}, {"Run as game","Запустить как игру"}, {"Protected file","Защищённый файл"}, {"Not found","Не найдено"},
     /* K85SYSLANG1 */ {"System language","Язык системы"}, {"Russian","Русский"}, {"English","Английский"},
     /* K85CLIP1 */ {"Clipboard","Буфер обмена"}, {"Clear clipboard","Очистить буфер"}, {"Copied","Скопировано"}, {"Pasted","Вставлено"}, {"Cut to clip","Вырезано"}, {"Clip empty","Буфер пуст"}, {"Empty text","Текст пуст"}, {"No room","Нет места"},
     /* K85NOTES2: Notes app */ {"Notes","Заметки"}, {"+ New note","+ Новая заметка"}, {"New note","Новая заметка"}, {"Edit note","Правка заметки"}, {"View note","Просмотр заметки"}, {"Delete note","Удалить заметку"}, {"Back to list","Назад к списку"}, {"Keep it","Оставить"}, {"Yes, delete","Да, удалить"}, {"Notes full","Список полон"}, {"No memory","Нет памяти"}, {"Empty: not saved","Пусто: не сохранено"}, {"Save failed","Ошибка сохранения"}, {"(empty)","(пусто)"},

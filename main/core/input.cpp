@@ -39,6 +39,20 @@ void k85_wait_ab_release(void) {
     s_ab_hold_start = 0;
 }
 
+// K85BACK1: hold A = step back in a list (first step when the hold begins, then repeats every 160 ms)
+int k85_a_hold_back(int first_steps) {
+    static bool active = false;
+    static int64_t last = 0;
+    if (M5.BtnA.isPressed() && !M5.BtnB.isPressed() && M5.BtnA.isHolding()) {
+        const int64_t t = esp_timer_get_time();
+        if (!active) { active = true; last = t; return first_steps; }
+        if (t - last >= 160000) { last = t; return 1; }
+        return 0;
+    }
+    active = false;
+    return 0;
+}
+
 // K85PT1: pointer (tap) from the web page
 static volatile int s_px = 0, s_py = 0;
 static volatile int64_t s_pt = 0;
@@ -88,6 +102,20 @@ bool k85_joy_get(int *x, int *y, int *boost) {
 }
 void k85_joy_want(bool on) { s_jwant = on; }
 bool k85_joy_wanted(void) { return s_jwant; }
+
+// K85PAD1: virtual A / B buttons held from the web page
+static volatile int s_pada = 0, s_padb = 0;
+static volatile int64_t s_padt = 0;
+static volatile bool s_padwant = false;
+void k85_pad_post(int a, int b) { s_pada = a ? 1 : 0; s_padb = b ? 1 : 0; s_padt = esp_timer_get_time(); }
+bool k85_pad_get(int *a, int *b) {
+    const int64_t t = s_padt;
+    if (!t || esp_timer_get_time() - t > 500000) return false;
+    *a = s_pada; *b = s_padb;
+    return true;
+}
+void k85_pad_want(bool on) { s_padwant = on; }
+bool k85_pad_wanted(void) { return s_padwant; }
 
 // K85PT3: age of a pending gesture
 bool k85_pointer_age(int64_t *a) { int64_t t = s_pt; if (!t) return false; *a = esp_timer_get_time() - t; return true; }

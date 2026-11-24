@@ -12,6 +12,8 @@
 #include "../../core/boot_theme.h"
 #include "../../core/config.h"
 #include "music_player.h"
+#include "json_view.h"
+#include "browser.h"
 
 #include "M5Unified.h"
 
@@ -120,7 +122,7 @@ static void read_file_view(const char *full_path, const char *name, long size) {
         while (true) {
             k85_input_update();
             if (k85_ab_held(500)) { k85_wait_ab_release(); return; }
-            if (k85_btn_a_pressed()) { page = (page + 1) % page_count; break; }
+            { const int k85_bk = k85_a_hold_back(2); if (k85_bk > 0) { page = ((page - k85_bk) % page_count + page_count) % page_count; break; } } /*B2:files*/ if (k85_btn_a_pressed()) { page = (page + 1) % page_count; break; }
             vTaskDelay(pdMS_TO_TICKS(30));
         }
     }
@@ -188,6 +190,24 @@ static void run_file(const char *full_path, const char *name) {
         return;
     }
 
+    {  // K85JV1: known text types open in the viewers
+        const char *k85_ext = strrchr(name, '.');
+        if (k85_ext) {
+            static const char *const jx[] = { ".json", ".jsonl", ".geojson", ".json5", ".ndjson" };
+            static const char *const tx[] = { ".html", ".htm", ".xhtml", ".txt", ".md", ".csv", ".log", ".ini", ".cfg", ".conf", ".xml", ".yaml", ".yml", ".lua", ".sh", ".c", ".h", ".cpp", ".py" };
+            for (size_t k = 0; k < sizeof(jx) / sizeof(jx[0]); k++) {
+                if (!strcasecmp(k85_ext, jx[k])) { k85_json_view_file(full_path); return; }
+            }
+            for (size_t k = 0; k < sizeof(tx) / sizeof(tx[0]); k++) {
+                if (!strcasecmp(k85_ext, tx[k]) && strlen(full_path) < 280) {
+                    char k85_u[300];
+                    snprintf(k85_u, sizeof(k85_u), "file://%s", full_path);
+                    k85_browser_open_url(k85_u);
+                    return;
+                }
+            }
+        }
+    }
     if (!is_thm) {
         k85_show_message("Run: not supported\nfor this file type\nA+B=back");
         wait_ab_exit();
@@ -275,7 +295,7 @@ static bool rename_file_confirm(const char *full_path, const char *name) {
 }
 
 static bool file_action_menu(const char *full_path, const char *name, long size) {
-    static const char *items[] = {"View/Edit", "Run", "Rename", "Delete", "Back"};
+    static const char *items[] = {"View/Edit", "Open/Run", "Rename", "Delete", "Back"};
     while (true) {
         int idx = k85_run_list_menu(name, items, 5, nullptr);
         if (idx < 0 || idx == 4) return false;

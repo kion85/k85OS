@@ -56,6 +56,7 @@ idf_component_register(
          "apps/tools/ir_remote.cpp"
          "apps/tools/task_manager.cpp"
          "apps/tools/json_interpreter.cpp"
+         "apps/tools/json_view.cpp"
          "apps/clock_menu.cpp"
          "core/post_beep.cpp"
          "core/bios_theme.cpp"
