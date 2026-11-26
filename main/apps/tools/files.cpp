@@ -11,6 +11,7 @@
 #include "../../core/bios_theme.h"
 #include "../../core/boot_theme.h"
 #include "../../core/config.h"
+#include "../../core/fs_guard.h"
 #include "music_player.h"
 #include "json_view.h"
 #include "browser.h"
@@ -37,7 +38,7 @@ struct FbEntry {
 };
 
 // K85CP1: copy through a temp file, check every step, replace the target only after a complete copy
-static bool k85_copy_safe(const char *src, const char *dst) {
+static bool k85_copy_safe(const char *src, const char *dst) { if (k85_is_blocked_path(src) || k85_is_blocked_path(dst)) return false;  // K85SEC9
     char tmp[300];
     snprintf(tmp, sizeof(tmp), "%.280s.tmp", dst);
     FILE *fs = fopen(src, "rb");
@@ -231,7 +232,7 @@ static void run_file(const char *full_path, const char *name) {
     char dst[192];
     snprintf(dst, sizeof(dst), "/littlefs/%s", name);
 
-    if (strcmp(full_path, dst) != 0) {
+    if (strcmp(full_path, dst) != 0 && !k85_is_blocked_path(full_path) && !k85_is_blocked_path(dst)) {
         FILE *fsrc = fopen(full_path, "rb");
         FILE *fdst = fopen(dst, "wb");
         if (fsrc && fdst) {
@@ -267,7 +268,7 @@ static void view_edit_menu(const char *full_path, const char *name, long size) {
         int idx = k85_run_list_menu(name, items, 3, nullptr);
         if (idx < 0 || idx == 2) return;
         if (idx == 0) read_file_view(full_path, name, size);
-        else if (idx == 1) write_file_edit(full_path, name);
+        else if (idx == 1) { if (size > K85_FILE_EDIT_MAX_BYTES) { k85_show_message("Too big to edit\n(max 2 KB, it would\nbe cut)\nA+B=back"); wait_ab_exit(); } else write_file_edit(full_path, name); }  // K85FIX5
     }
 }
 
@@ -288,7 +289,7 @@ static bool rename_file_confirm(const char *full_path, const char *name) {
     char new_path[300];
     snprintf(new_path, sizeof(new_path), "%s/%s", dir, new_name);
 
-    bool ok = (rename(full_path, new_path) == 0);
+    bool ok = !k85_is_blocked_path(full_path) && !k85_is_blocked_path(new_path) && (rename(full_path, new_path) == 0);  // K85SEC9
     k85_show_message(ok ? "Renamed!\nA+B=back" : "Rename failed\nA+B=back");
     wait_ab_exit();
     return ok;
@@ -322,7 +323,7 @@ static int fb_list_entries(const char *dir_path, FbEntry out[], int max_n) {
         char full[300];
         snprintf(full, sizeof(full), "%s/%s", dir_path, ent->d_name);
         struct stat st;
-        if (stat(full, &st) != 0) continue;
+        if (stat(full, &st) != 0 || k85_is_blocked_path(full)) continue;  // K85SEC9: protected files do not even show up
 
         snprintf(out[n].name, sizeof(out[n].name), "%.60s", ent->d_name);
         out[n].is_dir = S_ISDIR(st.st_mode);

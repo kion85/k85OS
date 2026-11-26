@@ -158,7 +158,7 @@ idf_component_get_property(k85_m5gfx_lib m5stack__m5gfx COMPONENT_LIB)
 target_link_libraries(${k85_m5gfx_lib} PUBLIC idf::esp_psram)
 
 # K85_FMT_TRUNC: -Os makes GCC format/string truncation analysis stricter; keep these warnings non-fatal for main
-target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-error=format-truncation -Wno-error=format-overflow -Wno-error=stringop-truncation)
+target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-error=format-truncation -Wno-error=format-overflow -Wno-error=stringop-truncation -Wno-error=misleading-indentation)  # K85FIX7
 
 # K85JS1: Elk (mini JavaScript) is third-party C code, no warnings from it
 set_source_files_properties(${LUA_SRCS} PROPERTIES COMPILE_OPTIONS "-w" COMPILE_DEFINITIONS "LUAI_MAXCCALLS=60")

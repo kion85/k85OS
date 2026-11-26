@@ -449,6 +449,7 @@ static void cfg_from_json(cJSON *root, k85_config_t *out) {
     { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "bios_text_color"); if (_x && cJSON_IsNumber(_x)) out->bios_text_color = (uint32_t)_x->valuedouble; }
     { cJSON *_x = cJSON_GetObjectItemCaseSensitive(root, "bios_selection_style"); if (_x && cJSON_IsNumber(_x)) out->bios_selection_style = _x->valueint; }
 #undef GET_INT
+    if ((unsigned)out->rotation > 7u) out->rotation = 0;   // K85SEC11
 
     cJSON *hs = cJSON_GetObjectItemCaseSensitive(root, "high_scores");
     if (hs && cJSON_IsObject(hs)) {
@@ -518,6 +519,7 @@ static void cfg_from_json(cJSON *root, k85_config_t *out) {
         }
     }
     { cJSON *x = cJSON_GetObjectItemCaseSensitive(root, "active_profile_idx"); if (x && cJSON_IsNumber(x)) out->active_profile_idx = x->valueint; }
+    if ((unsigned)out->active_profile_idx >= (unsigned)K85_MAX_PROFILES) out->active_profile_idx = 0;  // K85SEC11
     {
         cJSON *totps = cJSON_GetObjectItemCaseSensitive(root, "totp_entries");
         if (totps && cJSON_IsArray(totps)) {
@@ -566,7 +568,9 @@ static void cfg_from_json(cJSON *root, k85_config_t *out) {
                         out->pw_entries[i].ciphertext[b] = (uint8_t)strtoul(byte_str, nullptr, 16);
                     }
                 }
-                if (ctl && cJSON_IsNumber(ctl)) out->pw_entries[i].ciphertext_len = ctl->valueint;
+                if (ctl && cJSON_IsNumber(ctl)) { int k85_cl = ctl->valueint;
+                    if (k85_cl < 0 || k85_cl > (int)sizeof(out->pw_entries[i].ciphertext) || (k85_cl % 16) != 0) k85_cl = 0;
+                    out->pw_entries[i].ciphertext_len = k85_cl; }  // K85SEC11: ct_hex[200] in cfg_to_json would overflow
             }
             out->pw_entries_count = n;
     { cJSON *_m = cJSON_GetObjectItemCaseSensitive(root, "mqtt_broker_uri"); if (_m && cJSON_IsString(_m)) snprintf(out->mqtt_broker_uri, sizeof(out->mqtt_broker_uri), "%s", _m->valuestring); }
@@ -617,7 +621,7 @@ bool k85_config_load(void) {
         return false;
     }
     fseek(f, 0, SEEK_END);
-    long sz = ftell(f);
+    long sz = ftell(f); if (sz <= 0 || sz > 65536) { fclose(f); ESP_LOGE(TAG, "config file size %ld is not plausible", sz); return false; }  // K85FIX5
     fseek(f, 0, SEEK_SET);
     char *buf = (char *)malloc((size_t)sz + 1);
     if (!buf) { fclose(f); return false; }
@@ -649,13 +653,17 @@ bool k85_config_save(void) {
     cJSON_Delete(root);
     if (!txt) return false;
 
-    FILE *f = fopen(CONFIG_FILE_PATH, "w");
+    char k85_tmp[128];
+    snprintf(k85_tmp, sizeof(k85_tmp), "%s.tmp", CONFIG_FILE_PATH);   // K85FIX5: write a temp file, replace the config only after a complete write
+    FILE *f = fopen(k85_tmp, "w");
     bool ok = false;
     if (f) {
         ok = fputs(txt, f) >= 0;
-        fclose(f);
+        if (fclose(f) != 0) ok = false;
     }
     cJSON_free(txt);
+    if (ok) ok = (rename(k85_tmp, CONFIG_FILE_PATH) == 0);
+    if (!ok) remove(k85_tmp);
     return ok;
 }
 

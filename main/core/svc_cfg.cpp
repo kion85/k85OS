@@ -14,7 +14,7 @@
 
 #define SVC_PATH "/littlefs/k85_svc.cfg"
 #define SVC_TMP  "/littlefs/k85_svc.tmp"
-#define SVC_MAX  1024
+#define SVC_MAX  2048
 
 static SemaphoreHandle_t svc_mtx(void) {
     static StaticSemaphore_t buf;
@@ -93,20 +93,20 @@ void k85_svc_set_str(const char *key, const char *val) {
         SvcLock lk;
         svc_read_all(in, SVC_MAX + 1);
 
-        size_t used = 0;
+        size_t used = 0; bool fit = true;
         size_t klen = strlen(key);
         char *pos = in;
         while (char *line = next_line(&pos)) {
             if (!line[0] || line_has_key(line, key, klen)) continue;
             int w = snprintf(outb + used, SVC_MAX - used, "%s\n", line);
-            if (w > 0 && (size_t)w < SVC_MAX - used) used += (size_t)w;
+            if (w > 0 && (size_t)w < SVC_MAX - used) used += (size_t)w; else fit = false;  // K85SEC10
         }
         if (val && val[0]) {
             int w = snprintf(outb + used, SVC_MAX - used, "%s=%s\n", key, val);
-            if (w > 0 && (size_t)w < SVC_MAX - used) used += (size_t)w;
+            if (w > 0 && (size_t)w < SVC_MAX - used) used += (size_t)w; else fit = false;  // K85SEC10
         }
 
-        FILE *f = fopen(SVC_TMP, "wb");
+        FILE *f = fit ? fopen(SVC_TMP, "wb") : nullptr;  // K85SEC10: a truncated service file would drop keys such as the AP password
         if (f) {
             bool ok = fwrite(outb, 1, used, f) == used;
             if (fclose(f) != 0) ok = false;

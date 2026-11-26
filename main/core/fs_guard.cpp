@@ -16,7 +16,7 @@ static bool has_ci(const char *s, const char *needle) {
 }
 
 bool k85_is_blocked_path(const char *path) {
-    if (!path) return true;
+    if (!path || strchr(path, '~')) return true;  // K85SEC9: FAT short names (K85OS_~1.JSO) dodge the name match
     static const char *const blocked[] = {
         "k85_ssh_host_key", "k85_ssh_",
         "k85os_config",      // the config and its .bak / .tmp / .new / .prev copies (WiFi passwords, hashes)

@@ -7,6 +7,7 @@
 #include "cJSON.h"
 #include "esp_heap_caps.h"
 #include "core/heavy_lock.h"
+#include "core/config.h"   // k85_fs_info
 
 #include <cstdio>
 #include <cstring>
@@ -30,7 +31,7 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
             buf->len += evt->data_len;
             buf->data[buf->len] = 0;
         } else {
-            ESP_LOGW(TAG, "http response truncated, buffer too small (cap=%u)", (unsigned)buf->cap);
+            ESP_LOGW(TAG, "http response truncated, buffer too small (cap=%u)", (unsigned)buf->cap); buf->len = buf->cap;  // K85FIX6: stop appending, a hole in the middle would give a plausible but wrong JSON
         }
     }
     return ESP_OK;
@@ -251,10 +252,10 @@ bool k85_apprepo_download_file(const char *url, const char *dest_path) {   // K8
     char buf[512];
     int r;
     bool ok = true;
-    long total = 0;
+    long total = 0; long k85_limit = K85_APPREPO_MAX_DOWNLOAD_BYTES; { size_t k85_ft = 0, k85_fu = 0; if (!strncmp(dest_path, "/littlefs/", 10) && k85_fs_info(&k85_ft, &k85_fu) && k85_ft > k85_fu) { size_t k85_room = k85_ft - k85_fu; long k85_cap = k85_room > 98304 ? (long)(k85_room - 98304) : 0; if (k85_cap < k85_limit) k85_limit = k85_cap; } }  // K85SEC11: leave room for the config
     while ((r = esp_http_client_read(client, buf, sizeof(buf))) > 0) {
         total += r;
-        if (total > K85_APPREPO_MAX_DOWNLOAD_BYTES) { ok = false; break; }
+        if (total > k85_limit) { ok = false; break; }
         if (fwrite(buf, 1, (size_t)r, f) != (size_t)r) { ok = false; break; }
     }
     if (r < 0) ok = false;

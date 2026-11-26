@@ -225,8 +225,8 @@ static void bk_save(void) {
     bk_msg("Backup", "Saves all settings to the SD", "card, ENCRYPTED with a password", "you choose (do not forget it!)", "B=continue  A=cancel");
     if (!bk_wait_b()) return;
     char pw[64] = "", pw2[64] = "";
-    if (!k85_text_input("Backup password (4+)", "", pw, sizeof(pw))) { bk_wipe(pw, sizeof(pw)); return; }
-    if (strlen(pw) < 4) { bk_wipe(pw, sizeof(pw)); bk_info("Too short", "Use at least 4 characters", nullptr, nullptr); return; }
+    if (!k85_text_input("Backup password (8+)", "", pw, sizeof(pw))) { bk_wipe(pw, sizeof(pw)); return; }
+    if (strlen(pw) < 8) { bk_wipe(pw, sizeof(pw)); bk_info("Too short", "Use at least 8 characters", nullptr, nullptr); return; }
     if (!k85_text_input("Repeat password", "", pw2, sizeof(pw2))) { bk_wipe(pw, sizeof(pw)); bk_wipe(pw2, sizeof(pw2)); return; }
     const bool same = (strcmp(pw, pw2) == 0);
     bk_wipe(pw2, sizeof(pw2));

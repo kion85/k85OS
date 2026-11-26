@@ -225,6 +225,7 @@ static void do_scan_internal(char *json_out, size_t json_out_size) {
     for (int i = 0; i < K85_WR_SCAN_POINTS; i++) {
         int f = center + (i - K85_WR_SCAN_POINTS / 2) * K85_WR_SCAN_STEP_KHZ;
         if (f < 0) f = 0;
+        if (!s_ws_task_running) break;  // K85FIX6: stop scanning when the session ends (the task owns s_ws)
         send_retune_internal(f, saved_mode);
         vTaskDelay(pdMS_TO_TICKS(220));
         int level = s_smeter_raw;
@@ -747,7 +748,7 @@ void k85_run_web_radio(void) {
     }
     k85_show_message(msg);
 
-    s_server_running = true;
+    s_server_running = (listen_fd >= 0); if (listen_fd < 0) k85_log("wr: socket() failed");  // K85FIX6: FD_SET(-1) would write outside the fd_set
     while (s_server_running) {
         k85_input_update();
         if (k85_ab_held(500)) { k85_wait_ab_release(); s_server_running = false; break; }
@@ -775,7 +776,7 @@ void k85_run_web_radio(void) {
     s_ws_task_running = false;
     {
         int64_t stop_wait_start = esp_timer_get_time();
-        while (!s_ws_task_finished && (esp_timer_get_time() - stop_wait_start) < 3000000) {
+        while (!s_ws_task_finished && (esp_timer_get_time() - stop_wait_start) < 6000000) {
             vTaskDelay(pdMS_TO_TICKS(20));
         }
     }

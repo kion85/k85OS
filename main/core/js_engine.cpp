@@ -258,6 +258,7 @@ static void jn_open(lua_State *L) {
     luaL_requiref(L, LUA_MATHLIBNAME, luaopen_math, 1);      lua_pop(L, 1);
     lua_pushnil(L); lua_setglobal(L, "dofile");
     lua_pushnil(L); lua_setglobal(L, "loadfile");
+    luaL_dostring(L, "local l=load;load=function(c,n,m,...) return l(c,n,'t',...) end;string.dump=nil");  // K85SEC9: text chunks only
     lua_pushglobaltable(L);
     luaL_setfuncs(L, k_fn, 0);
     lua_pop(L, 1);

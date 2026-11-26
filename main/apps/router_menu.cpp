@@ -330,7 +330,7 @@ static void run_router_start(bool is_guest) {
         else addr.sin_addr.s_addr = htonl(INADDR_ANY);
     }
     addr.sin_port = htons(80);
-    bind(listen_fd, (struct sockaddr *)&addr, sizeof(addr));
+    if (bind(listen_fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) { close(listen_fd); k85_router_stop(); k85_show_message("Port 80 is busy\nA+B=back"); wait_ab_exit(); return; }  // K85SEC9
     listen(listen_fd, 2);
 
     uint32_t last_redraw = 0;

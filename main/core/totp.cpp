@@ -24,7 +24,7 @@ static int base32_decode(const char *in, uint8_t *out, size_t out_max) {
         const char *pos = strchr(alphabet, c);
         if (!pos) continue;
         int val = (int)(pos - alphabet);
-        buffer = (buffer << 5) | val;
+        buffer = ((buffer << 5) | val) & 0xFFF;  // K85SEC10: keep only the bits in use, no signed overflow
         bits_left += 5;
         if (bits_left >= 8) {
             if (count >= out_max) break;

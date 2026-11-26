@@ -95,7 +95,7 @@ static bool sanitize_relpath(const char *name) {
     if (strstr(name, "..")) return false;
     if (name[0] == '/') return false;
     for (const char *p = name; *p; p++) {
-        if ((unsigned char)*p < 0x20) return false;
+        if ((unsigned char)*p < 0x20 || strchr("<>\"'\\", *p)) return false;  // K85SEC9
     }
     return true;
 }
@@ -525,7 +525,7 @@ static bool handle_download(int conn_fd, const char *relpath) {
 
     char buf[1024];
     size_t r;
-    while ((r = fread(buf, 1, sizeof(buf), f)) > 0) send(conn_fd, buf, r, 0);
+    { const int64_t k85_dl = esp_timer_get_time() + 300LL * 1000000; while ((r = fread(buf, 1, sizeof(buf), f)) > 0) { if (send(conn_fd, buf, r, 0) != (int)r || esp_timer_get_time() > k85_dl) break; } }  // K85SEC9: a dead client must not hold the server
     fclose(f);
     return true;
 }
@@ -599,7 +599,7 @@ static void build_index_page(char *out, size_t out_size, const char *ssid, const
         struct dirent *ent;
         int count = 0;
         while ((ent = readdir(d)) != nullptr && count < K85_FM_MAX_ENTRIES) {
-            if (!strcmp(ent->d_name, ".") || !strcmp(ent->d_name, "..")) continue;
+            if (!strcmp(ent->d_name, ".") || !strcmp(ent->d_name, "..") || strpbrk(ent->d_name, "<>\"'\\")) continue;  // K85SEC9
             char full[256];
             snprintf(full, sizeof(full), "%s/%s", full_dir, ent->d_name);
             struct stat st;
@@ -626,7 +626,7 @@ static void build_index_page(char *out, size_t out_size, const char *ssid, const
         struct dirent *ent;
         int count = 0;
         while ((ent = readdir(d)) != nullptr && count < K85_FM_MAX_ENTRIES) {
-            if (!strcmp(ent->d_name, ".") || !strcmp(ent->d_name, "..")) continue;
+            if (!strcmp(ent->d_name, ".") || !strcmp(ent->d_name, "..") || strpbrk(ent->d_name, "<>\"'\\")) continue;  // K85SEC9
             char full[256];
             snprintf(full, sizeof(full), "%s/%s", full_dir, ent->d_name);
             struct stat st;
@@ -782,6 +782,7 @@ static void handle_connection(int conn_fd, const char *ssid) {
             send_http_response(conn_fd, "401 Unauthorized", "text/html", k85_login_page_html);
             return;
         }
+        { long k85_want = -1; for (const char *h = req_buf; h < req_buf + headers_end; h++) { if ((h[0] | 32) == 'c' && strncasecmp(h, "content-length:", 15) == 0) { k85_want = strtol(h + 15, nullptr, 10); break; } } while (k85_want > 0 && req_len - (headers_end + 4) < k85_want && req_len < (long)req_buf_cap - 1) { if (esp_timer_get_time() > s_conn_deadline_us) break; int k85_r = recv(conn_fd, req_buf + req_len, req_buf_cap - 1 - req_len, 0); if (k85_r <= 0) break; req_len += k85_r; req_buf[req_len] = 0; } }  // K85-01 like web_terminal
         const char *body_ptr = req_buf + headers_end + 4;
         char submitted_key[32] = {0};
         get_query_param(body_ptr, "key", submitted_key, sizeof(submitted_key));
@@ -900,7 +901,7 @@ static void handle_connection(int conn_fd, const char *ssid) {
             snprintf(src, sizeof(src), "%s/%s", K85_UPLOAD_BASE_PATH, old_name);
             if (dir[0]) snprintf(dst, sizeof(dst), "%s/%s/%s", K85_UPLOAD_BASE_PATH, dir, new_name);
             else snprintf(dst, sizeof(dst), "%s/%s", K85_UPLOAD_BASE_PATH, new_name);
-            rename(src, dst);
+            if (k85_is_blocked_path(src) || k85_is_blocked_path(dst) || is_blocked_download_path(old_name) || is_blocked_download_path(new_name)) k85_log("web-fm: rename refused (protected file): %s -> %s", src, dst); else rename(src, dst);  // K85SEC9
             k85_log("web-fm: renamed %s -> %s", src, dst);
         }
         char redir[256];
@@ -1072,7 +1073,7 @@ void k85_run_wifi_hotspot(void) {
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
     addr.sin_port = htons(80);
-    bind(s_hotspot_listen_fd, (struct sockaddr *)&addr, sizeof(addr));
+    if (bind(s_hotspot_listen_fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) { close(s_hotspot_listen_fd); s_hotspot_listen_fd = -1; k85_show_message("Port 80 is busy\nA+B=back"); esp_wifi_set_mode(WIFI_MODE_STA); return; }  // K85SEC9
     listen(s_hotspot_listen_fd, 2);
 
     snprintf(s_hotspot_ssid, sizeof(s_hotspot_ssid), "%s", ssid);
